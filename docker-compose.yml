@@ -1,0 +1,50 @@
+# DMTool v2.0 — Docker Compose
+# Usage: docker-compose up --build
+services:
+  backend:
+    build: ./backend
+    container_name: dmtool-backend
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=file:/data/dmtool.db
+    volumes:
+      - backend_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: dmtool-frontend
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8080
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: dmtool-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/ssl/certs:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_data:

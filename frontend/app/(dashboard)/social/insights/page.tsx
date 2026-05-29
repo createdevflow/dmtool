@@ -43,9 +43,13 @@ export default function SocialInsightsPage() {
       setProjects(allProjects);
 
       if (allProjects.length > 0) {
+        let savedProjectId = null;
+        try { savedProjectId = parseInt(localStorage.getItem("dmtool_active_project_id") || "0"); } catch (e) {}
+        const defaultProject = allProjects.find((p: any) => p.id === savedProjectId) || allProjects[allProjects.length - 1];
         const selected = targetProjectId
-          ? allProjects.find((p: any) => p.id === targetProjectId) || allProjects[allProjects.length - 1]
-          : allProjects[allProjects.length - 1];
+          ? allProjects.find((p: any) => p.id === targetProjectId) || defaultProject
+          : defaultProject;
+        if (selected) localStorage.setItem("dmtool_active_project_id", selected.id.toString());
         setProject(selected);
 
         const res = await dashboardApi.getInsights(selected.id);
@@ -82,12 +86,17 @@ export default function SocialInsightsPage() {
 
   useEffect(() => { fetchData(); }, []);
 
+  const socialKeywords = ["Engagement", "Meta", "Instagram", "Followers", "Reach", "Social", "Audience"];
+  const isSocialInsight = (i: any) => socialKeywords.some(k => i.title?.toLowerCase().includes(k.toLowerCase()) || i.description?.toLowerCase().includes(k.toLowerCase()));
+
   const filteredInsights = insights
+    .filter(isSocialInsight)
     .filter((i) => !dismissed.has(i.id))
     .filter((i) => filter === "all" || i.type === filter);
 
-  const criticalCount = insights.filter((i) => i.type === "CRITICAL" && !dismissed.has(i.id)).length;
-  const oppCount = insights.filter((i) => i.type === "OPPORTUNITY" && !dismissed.has(i.id)).length;
+  const socialInsightsOnly = insights.filter(isSocialInsight);
+  const criticalCount = socialInsightsOnly.filter((i) => i.type === "CRITICAL" && !dismissed.has(i.id)).length;
+  const oppCount = socialInsightsOnly.filter((i) => i.type === "OPPORTUNITY" && !dismissed.has(i.id)).length;
 
   if (loading) return (
     <div className="flex items-center justify-center h-[60vh]">
@@ -136,7 +145,7 @@ export default function SocialInsightsPage() {
             <p className="text-brand-100 font-medium">
               {criticalCount > 0
                 ? `${criticalCount} critical issue${criticalCount > 1 ? "s" : ""} need immediate attention. ${oppCount} growth opportunities identified.`
-                : `${insights.length} insights generated from your real performance data. ${oppCount} growth opportunities ready to action.`}
+                : `${socialInsightsOnly.length} insights generated from your real performance data. ${oppCount} growth opportunities ready to action.`}
             </p>
           </div>
           <div className="flex gap-3 shrink-0">
@@ -164,7 +173,7 @@ export default function SocialInsightsPage() {
                 : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
             }`}
           >
-            {f === "all" ? `All (${insights.length})` : f}
+            {f === "all" ? `All (${socialInsightsOnly.length})` : f}
           </button>
         ))}
       </div>

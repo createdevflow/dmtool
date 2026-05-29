@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -24,6 +25,35 @@ func DeriveNameFromURL(rawURL string) string {
 	}
 	
 	return "New Project"
+}
+
+// NormalizeSocialHandle strips common URL prefixes and leading @ symbols so
+// social handles can be compared against API usernames consistently.
+func NormalizeSocialHandle(raw string) string {
+	clean := strings.TrimSpace(raw)
+	clean = strings.TrimPrefix(clean, "@")
+	clean = strings.TrimSuffix(clean, "/")
+
+	if clean == "" {
+		return ""
+	}
+
+	if strings.Contains(clean, "://") {
+		if parsed, err := url.Parse(clean); err == nil {
+			clean = parsed.Path
+		}
+	}
+
+	clean = strings.Trim(clean, "/")
+	if clean == "" {
+		return ""
+	}
+
+	parts := strings.Split(clean, "/")
+	clean = parts[len(parts)-1]
+	clean = strings.TrimSpace(clean)
+	clean = strings.TrimPrefix(clean, "@")
+	return strings.ToLower(clean)
 }
 
 // CalculateChange returns the percentage difference between current and previous values.

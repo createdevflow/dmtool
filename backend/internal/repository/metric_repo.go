@@ -2,6 +2,8 @@
 package repository
 
 import (
+	"strings"
+
 	"backend/internal/models"
 
 	"gorm.io/gorm"
@@ -71,7 +73,7 @@ func (r *gormMetricRepository) FindSocialMetricsByProject(projectID uint, days i
 	var metrics []models.SocialMetric
 	err := r.db.Where("project_id = ?", projectID).
 		Order("recorded_at DESC").
-		Limit(days * 2). // 2 platforms
+		Limit(days * 10). // accommodate multiple platforms per day
 		Find(&metrics).Error
 	return metrics, err
 }
@@ -79,19 +81,35 @@ func (r *gormMetricRepository) FindSocialMetricsByProject(projectID uint, days i
 // FindLatestSocialMetric returns the most recent social metric for a given platform.
 func (r *gormMetricRepository) FindLatestSocialMetric(projectID uint, platform string) (*models.SocialMetric, error) {
 	var sm models.SocialMetric
-	err := r.db.Where("project_id = ? AND platform = ?", projectID, platform).
+	err := r.db.Where("project_id = ? AND LOWER(platform) = LOWER(?)", projectID, platform).
 		Order("recorded_at DESC").First(&sm).Error
 	return &sm, err
 }
 // FindLatestSocialMetrics returns the most recent social metric for each platform.
 func (r *gormMetricRepository) FindLatestSocialMetrics(projectID uint) ([]models.SocialMetric, error) {
 	var metrics []models.SocialMetric
-	// Use a subquery to find the latest record for each platform for the given project
-	subQuery := r.db.Model(&models.SocialMetric{}).
-		Select("MAX(id)").
-		Where("project_id = ?", projectID).
-		Group("platform")
+	err := r.db.Where("project_id = ?", projectID).
+		Order("LOWER(platform) ASC, is_simulated ASC, recorded_at DESC, id DESC").
+		Find(&metrics).Error
+	if err != nil {
+		return metrics, err
+	}
 
-	err := r.db.Where("id IN (?)", subQuery).Find(&metrics).Error
+	// Collapse case-variant duplicates and keep the newest live metric per platform.
+	seen := make(map[string]struct{})
+	filtered := make([]models.SocialMetric, 0, len(metrics))
+	for _, metric := range metrics {
+		key := strings.ToLower(strings.TrimSpace(metric.Platform))
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		filtered = append(filtered, metric)
+	}
+
+	metrics = filtered
 	return metrics, err
 }

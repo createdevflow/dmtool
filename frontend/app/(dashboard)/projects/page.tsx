@@ -52,6 +52,7 @@ export default function ProjectsPage() {
       // But lib/api-client.ts doesn't have a direct deleteProject method, let's check
       await dashboardApi.deleteProject(id);
       fetchProjects();
+      window.dispatchEvent(new Event("dmtool_projects_updated"));
     } catch (err) {
       console.error("Failed to delete project", err);
       alert("Failed to delete project");

@@ -8,6 +8,7 @@ import { dashboardApi } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { toast } from "@/components/ui/toaster";
 
 type OnboardingStep = 1 | 2 | 3 | 4;
 

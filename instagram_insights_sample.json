@@ -1,0 +1,125 @@
+{
+  "account": {
+    "id": "17841400000000000",
+    "username": "example_brand",
+    "display_name": "Example Brand",
+    "biography": "We help teams grow with simple marketing tools.",
+    "website": "https://example.com",
+    "profile_picture_url": "https://scontent.xx.fbcdn.net/v/t51.2885-19/xxxxx_n.jpg",
+    "followers_count": 12500,
+    "follows_count": 450,
+    "media_count": 320
+  },
+
+  "insights": {
+    "daily": {
+      "reach": 4200,
+      "profile_views": 210,
+      "link_taps": 30
+    },
+    "weekly_reach": 28000,
+    "monthly_reach": 120000
+  },
+
+  "top_content": [
+    {
+      "id": "17901234567890123",
+      "type": "Reel",
+      "views": "--",
+      "reach": 3500,
+      "engagement": 420,
+      "interactions": 380,
+      "date": "May 26",
+      "img": "https://scontent.xx.fbcdn.net/v/t51.2885-15/e35/xxxx_n.jpg",
+      "permalink": "https://www.instagram.com/p/XXXXXXXXX/"
+    },
+    {
+      "id": "17909876543210987",
+      "type": "Post",
+      "views": "--",
+      "reach": 2400,
+      "engagement": 210,
+      "interactions": 200,
+      "date": "May 22",
+      "img": "https://scontent.xx.fbcdn.net/v/t51.2885-15/e35/yyyy_n.jpg",
+      "permalink": "https://www.instagram.com/p/YYYYYYYYY/"
+    }
+  ],
+
+  "content_split": [
+    { "type": "Reels", "percentage": 20.0, "color": "bg-rose-500" },
+    { "type": "Stories", "percentage": 10.0, "color": "bg-amber-500" },
+    { "type": "Posts", "percentage": 70.0, "color": "bg-sky-500" }
+  ],
+
+  "active_times": [
+    { "day": "Mon", "active": 150 },
+    { "day": "Tue", "active": 170 },
+    { "day": "Wed", "active": 200 },
+    { "day": "Thu", "active": 180 },
+    { "day": "Fri", "active": 220 },
+    { "day": "Sat", "active": 90 },
+    { "day": "Sun", "active": 70 }
+  ],
+
+  "audience_insights": {
+    "age_gender": {
+      "18-24": { "male": 1200, "female": 1400 },
+      "25-34": { "male": 3200, "female": 3500 },
+      "35-44": { "male": 800, "female": 600 }
+    },
+    "countries": {
+      "US": 8000,
+      "GB": 1200,
+      "IN": 900
+    },
+    "cities": {
+      "New York": 1500,
+      "London": 800,
+      "San Francisco": 700
+    }
+  },
+
+  "engagement_count": 400,
+  "engagement_rate": 3.2,
+  "profile_visits": 210,
+  "external_link_taps": 30,
+
+  "status": "stable",
+  "is_simulated": false,
+  "recorded_at": "2026-05-29T15:05:00Z",
+
+  "raw_examples": {
+    "account_query_response": {
+      "followers_count": 12500,
+      "follows_count": 450,
+      "media_count": 320,
+      "biography": "We help teams grow with simple marketing tools.",
+      "website": "https://example.com",
+      "name": "Example Brand",
+      "username": "example_brand",
+      "profile_picture_url": "https://scontent.xx.fbcdn.net/v/t51.2885-19/xxxxx_n.jpg"
+    },
+
+    "insights_response_sample": {
+      "data": [
+        { "name": "reach", "values": [ { "value": 4200 } ] },
+        { "name": "profile_views", "values": [ { "value": 210 } ] },
+        { "name": "get_directions_clicks", "values": [ { "value": 30 } ] }
+      ]
+    },
+
+    "media_item_sample": {
+      "id": "17901234567890123",
+      "media_type": "VIDEO",
+      "media_url": "https://scontent.xx.cdninstagram.com/v/t50.2886-16/abcdef.mp4",
+      "thumbnail_url": "https://scontent.xx.cdninstagram.com/v/t51.2885-15/xxxxx_n.jpg",
+      "like_count": 300,
+      "comments_count": 80,
+      "timestamp": "2026-05-26T14:34:00+00:00",
+      "permalink": "https://www.instagram.com/p/XXXXXXXXX/",
+      "reach": 3500,
+      "engagement": 420
+    }
+  }
+}

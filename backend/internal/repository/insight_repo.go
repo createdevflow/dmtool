@@ -3,7 +3,6 @@ package repository
 
 import (
 	"backend/internal/models"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -27,11 +26,9 @@ func NewInsightRepository(db *gorm.DB) InsightRepository {
 	return &gormInsightRepository{db: db}
 }
 
-// ReplaceInsights deletes insights older than 24 hours and inserts fresh ones.
 func (r *gormInsightRepository) ReplaceInsights(projectID uint, insights []models.Insight) error {
-	cutoff := time.Now().Add(-24 * time.Hour)
-	if err := r.db.Where("project_id = ? AND created_at < ?", projectID, cutoff).
-		Delete(&models.Insight{}).Error; err != nil {
+	// Delete all existing insights for this project to prevent duplication
+	if err := r.db.Where("project_id = ?", projectID).Delete(&models.Insight{}).Error; err != nil {
 		return err
 	}
 	if len(insights) == 0 {

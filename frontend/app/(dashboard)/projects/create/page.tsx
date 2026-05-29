@@ -54,6 +54,16 @@ export default function CreateProjectPage() {
       formattedUrl = `https://${formattedUrl}`;
     }
 
+    // Synchronously open popup to bypass popup blockers
+    const needsSocialLogin = (goal === 'social' || goal === 'both');
+    let loginWindow: Window | null = null;
+    if (needsSocialLogin) {
+      loginWindow = window.open('', 'MetaLogin', 'width=600,height=700,left=200,top=100');
+      if (loginWindow) {
+        loginWindow.document.write('<div style="font-family:sans-serif;padding:20px;text-align:center;">Connecting to Meta...</div>');
+      }
+    }
+
     try {
       await dashboardApi.onboard({
         name: name,
@@ -61,13 +71,25 @@ export default function CreateProjectPage() {
         url: formattedUrl,
         ig_handle: handles.instagram,
         twitter_handle: handles.twitter,
-        fb_handle: handles.facebook,
+        fb_handle: activeSocials.includes('facebook') ? "auto" : "",
         linkedin_handle: handles.linkedin
       });
+      window.dispatchEvent(new Event("dmtool_projects_updated"));
+      
+      if (needsSocialLogin && loginWindow) {
+        const res = await dashboardApi.getMetaAuthUrl();
+        if (res?.data?.data?.url) {
+          loginWindow.location.href = res.data.data.url;
+        } else {
+          loginWindow.close();
+        }
+      }
+
       setSuccess(true);
       setTimeout(() => router.push("/dashboard"), 1500);
     } catch (err) {
       console.error("Failed to create project", err);
+      if (loginWindow) loginWindow.close();
       setLoading(false);
     }
   };
@@ -109,9 +131,9 @@ export default function CreateProjectPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {[
-                { id: "seo", title: "Search engine", icon: Search, desc: "SEO Tracking & Audit", color: "text-blue-600 bg-blue-50" },
-                { id: "social", title: "Social media", icon: Users, desc: "Engagement & Growth", color: "text-purple-600 bg-purple-50" },
-                { id: "both", title: "Unified strategy", icon: Sparkles, desc: "SEO + Social Growth", color: "text-amber-600 bg-amber-50" }
+                { id: "seo", title: "Website & SEO", icon: Search, desc: "Track traffic, rankings, and technical health", color: "text-blue-600 bg-blue-50" },
+                { id: "social", title: "Social Media Intelligence", icon: Users, desc: "Analyze engagement, audience, and trends", color: "text-purple-600 bg-purple-50" },
+                { id: "both", title: "Comprehensive Tracking", icon: Sparkles, desc: "Unified analytics for website and social", color: "text-amber-600 bg-amber-50" }
               ].map((item) => (
                 <button 
                   key={item.id}
@@ -175,45 +197,47 @@ export default function CreateProjectPage() {
                     </div>
                   </div>
 
-                  <div className="space-y-4 pt-4 border-t border-slate-100">
-                    <Label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Social Channels</Label>
-                    <div className="grid grid-cols-4 gap-4">
-                       {[
-                         { id: 'instagram', icon: Instagram },
-                         { id: 'twitter', icon: Twitter },
-                         { id: 'linkedin', icon: Linkedin },
-                         { id: 'facebook', icon: Facebook }
-                       ].map((s) => (
-                         <button
-                           key={s.id}
-                           type="button"
-                           onClick={() => toggleSocial(s.id)}
-                           className={`h-16 rounded-2xl border transition-all duration-300 flex flex-col items-center justify-center gap-1.5 ${
-                             activeSocials.includes(s.id) 
-                             ? 'bg-slate-900 border-slate-900 text-white' 
-                             : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300 shadow-sm'
-                           }`}
-                         >
-                            <s.icon className="w-5 h-5" />
-                            <span className="text-[9px] font-bold uppercase tracking-tight">{s.id}</span>
-                         </button>
-                       ))}
-                    </div>
+                  {goal !== 'seo' && (
+                    <div className="space-y-4 pt-4 border-t border-slate-100">
+                      <Label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Social Channels</Label>
+                      <div className="grid grid-cols-4 gap-4">
+                         {[
+                           { id: 'instagram', icon: Instagram },
+                           { id: 'twitter', icon: Twitter },
+                           { id: 'linkedin', icon: Linkedin },
+                           { id: 'facebook', icon: Facebook }
+                         ].map((s) => (
+                           <button
+                             key={s.id}
+                             type="button"
+                             onClick={() => toggleSocial(s.id)}
+                             className={`h-16 rounded-2xl border transition-all duration-300 flex flex-col items-center justify-center gap-1.5 ${
+                               activeSocials.includes(s.id) 
+                               ? 'bg-slate-900 border-slate-900 text-white' 
+                               : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300 shadow-sm'
+                             }`}
+                           >
+                              <s.icon className="w-5 h-5" />
+                              <span className="text-[9px] font-bold uppercase tracking-tight">{s.id}</span>
+                           </button>
+                         ))}
+                      </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                       {activeSocials.map((platform) => (
-                          <div key={platform} className="relative">
-                             <span className="absolute left-3 top-2.5 text-slate-400 text-xs font-bold">@</span>
-                             <Input 
-                               placeholder={`${platform} username`}
-                               className="h-10 rounded-xl bg-slate-50 border-transparent focus:bg-white focus:border-slate-200 pl-7 text-sm font-semibold"
-                               value={(handles as any)[platform]}
-                               onChange={(e) => setHandles({...handles, [platform]: e.target.value})}
-                             />
-                          </div>
-                       ))}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                         {activeSocials.filter(p => p !== 'facebook').map((platform) => (
+                            <div key={platform} className="relative">
+                               <span className="absolute left-3 top-2.5 text-slate-400 text-xs font-bold">@</span>
+                               <Input 
+                                 placeholder={`${platform} username`}
+                                 className="h-10 rounded-xl bg-slate-50 border-transparent focus:bg-white focus:border-slate-200 pl-7 text-sm font-semibold"
+                                 value={(handles as any)[platform]}
+                                 onChange={(e) => setHandles({...handles, [platform]: e.target.value})}
+                               />
+                            </div>
+                         ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <Button 
                     type="submit" 
@@ -258,6 +282,7 @@ export default function CreateProjectPage() {
           </motion.div>
         ))}
       </div>
+
     </div>
   );
 }

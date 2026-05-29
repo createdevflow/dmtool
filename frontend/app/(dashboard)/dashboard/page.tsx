@@ -35,7 +35,7 @@ export default function DashboardPage() {
   const [snapshot, setSnapshot] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'website' | 'social' | 'combined'>('combined');
-  const [competitors, setCompetitors] = useState<any[]>([]);
+
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
 
@@ -47,25 +47,28 @@ export default function DashboardPage() {
       setProjects(allProjects);
 
       if (allProjects.length > 0) {
-        const selected = targetProjectId 
-          ? allProjects.find((p: any) => p.id === targetProjectId) || allProjects[allProjects.length - 1]
-          : allProjects[allProjects.length - 1];
+        let savedProjectId = null;
+        try { savedProjectId = parseInt(localStorage.getItem("dmtool_active_project_id") || "0"); } catch (e) {}
+        const defaultProject = allProjects.find((p: any) => p.id === savedProjectId) || allProjects[allProjects.length - 1];
+        const selected = targetProjectId
+          ? allProjects.find((p: any) => p.id === targetProjectId) || defaultProject
+          : defaultProject;
+        if (selected) localStorage.setItem("dmtool_active_project_id", selected.id.toString());
         
         setProject(selected);
 
-        const [mRes, iRes, tRes, sRes, cRes] = await Promise.all([
+        const [mRes, iRes, tRes, sRes] = await Promise.all([
           dashboardApi.getMetrics(selected.id),
           dashboardApi.getInsights(selected.id),
           dashboardApi.getTasks(selected.id),
           dashboardApi.getSnapshot(selected.id),
-          dashboardApi.getCompetitors(selected.id),
         ]);
 
         
         const mData = mRes.data?.data;
         const iData = iRes.data?.data;
         const tData = tRes.data?.data;
-        const cData = cRes.data?.data;
+
         
         const formattedMetrics = (Array.isArray(mData) ? mData : []).map((m: any) => ({
           name: new Date(m.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
@@ -87,7 +90,7 @@ export default function DashboardPage() {
         }));
         setTasks(formattedTasks);
         setSnapshot(sRes.data?.data || null);
-        setCompetitors(Array.isArray(cData) ? cData : []);
+
 
 
 
@@ -338,42 +341,6 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          {/* 🧪 7. COMPETITOR SNAPSHOT */}
-          <div className="space-y-8">
-            <div className="flex items-end justify-between">
-              <div className="space-y-1">
-                <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Benchmarking</h2>
-                <p className="text-xl font-semibold text-slate-900 tracking-tight">Competitors</p>
-              </div>
-              <Button variant="link" className="text-[11px] font-bold uppercase text-brand-600 p-0 h-auto" onClick={() => router.push('/seo/keywords')}>View Detailed &rarr;</Button>
-            </div>
-            <div className="space-y-4">
-              {competitors.length === 0 ? (
-                <div className="rounded-2xl border-2 border-dashed border-slate-100 py-10 text-center">
-                  <p className="text-sm text-slate-400 font-medium">No competitors tracked yet</p>
-                  <p className="text-xs text-slate-300 mt-1">Add competitors during onboarding</p>
-                </div>
-              ) : (
-                competitors.slice(0, 3).map((comp: any, i: number) => (
-                  <div key={comp.id ?? i} className="flex items-center justify-between p-5 rounded-xl border border-slate-100 bg-slate-50/40 hover:bg-white hover:border-slate-200 transition-all group">
-                    <div className="flex items-center gap-4">
-                      <div className="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center font-bold text-xs text-slate-400 shadow-sm">
-                        {comp.name?.[0] ?? "?"}
-                      </div>
-                      <div>
-                        <p className="text-[13px] font-semibold text-slate-900">{comp.name}</p>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{comp.health}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className={`text-[13px] font-bold ${comp.growth?.startsWith('+') ? 'text-emerald-600' : 'text-rose-500'}`}>{comp.growth}</p>
-                      <p className="text-[10px] text-slate-400 font-semibold">Score: {comp.score}</p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
 
         </div>
       </div>

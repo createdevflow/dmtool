@@ -4,7 +4,6 @@
 package handlers
 
 import (
-	"context"
 	"log"
 	"strconv"
 	"time"
@@ -15,7 +14,6 @@ import (
 	"backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/oauth2"
 )
 
 // SyncHandler orchestrates on-demand full data sync for a project.

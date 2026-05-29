@@ -282,6 +282,13 @@ func generateRuleBasedInsights(project models.Project, current, previous []model
 					"Capitalise by cross-promoting your top posts to your email list and running a giveaway or collab to convert engaged followers into website traffic.",
 					engRate, formatNum(sig.socialFollowers)),
 			)
+		} else {
+			addInsight(models.InsightTypeInfo,
+				fmt.Sprintf("Steady %.1f%% Engagement", engRate),
+				fmt.Sprintf("Your engagement rate of %.1f%% across %s followers is average. "+
+					"Focus on creating more Save-able and Share-able content to boost it above the 3.5%% benchmark.",
+					engRate, formatNum(sig.socialFollowers)),
+			)
 		}
 	} else if project.IGHandle != "" && !sig.hasSocialData {
 		addInsight(models.InsightTypeInfo,

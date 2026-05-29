@@ -52,7 +52,7 @@ const navGroups = [
       { name: "Profile Analyzer", href: "/social/profile-analyzer", icon: Users },
       { name: "Content Analytics", href: "/social/insights", icon: BarChart3 },
       { name: "Growth Tracking", href: "/social/growth", icon: Target },
-      { name: "Competitor Social", href: "/social/competitors", icon: Crosshair },
+      { name: "Profile Discovery", href: "/social/competitors", icon: Crosshair },
     ]
   },
   {
@@ -87,7 +87,8 @@ const navGroups = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [projectGoal, setProjectGoal] = useState<string>("both");
+  const [hasSeoProject, setHasSeoProject] = useState<boolean>(true);
+  const [hasSocialProject, setHasSocialProject] = useState<boolean>(true);
   
   // Keep track of which groups are open
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
@@ -102,26 +103,38 @@ export function Sidebar() {
     const fetchProjectContext = async () => {
       try {
         const res = await dashboardApi.getProjects();
-        if (res.data && res.data.length > 0) {
-          // Use the most recent project as context
-          const latest = res.data[res.data.length - 1];
-          setProjectGoal(latest.goal || "both");
+        const allProjects = res.data?.data || [];
+        
+        if (allProjects.length > 0) {
+          let seo = false;
+          let social = false;
+          
+          allProjects.forEach((p: any) => {
+            if (p.goal === "seo" || p.goal === "both") seo = true;
+            if (p.goal === "social" || p.goal === "both") social = true;
+          });
+          
+          setHasSeoProject(seo);
+          setHasSocialProject(social);
         }
       } catch (err) {
         console.error("Failed to fetch project context", err);
       }
     };
     fetchProjectContext();
+    
+    window.addEventListener("dmtool_projects_updated", fetchProjectContext);
+    return () => window.removeEventListener("dmtool_projects_updated", fetchProjectContext);
   }, []);
 
   const toggleGroup = (title: string) => {
     setOpenGroups(prev => ({ ...prev, [title]: !prev[title] }));
   };
 
-  // Filter groups based on project goal
+  // Filter groups based on available project goals
   const filteredGroups = navGroups.filter(group => {
-    if (group.title === "SEO Intelligence" && projectGoal === "social") return false;
-    if (group.title === "Social Media" && projectGoal === "seo") return false;
+    if (group.title === "SEO Intelligence" && !hasSeoProject) return false;
+    if (group.title === "Social Media" && !hasSocialProject) return false;
     return true;
   });
 

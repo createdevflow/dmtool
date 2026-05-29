@@ -118,6 +118,8 @@ export const dashboardApi = {
     apiClient.get(
       `/social/profile?handle=${encodeURIComponent(handle)}&platform=${platform}${projectId ? `&project_id=${projectId}` : ""}`
     ),
+  getRelatedProfiles: (projectId: number) =>
+    apiClient.get(`/social/related?project_id=${projectId}`),
 
   // Content generation
   generateContent: (data: {

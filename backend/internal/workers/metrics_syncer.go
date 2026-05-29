@@ -5,6 +5,7 @@ package workers
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"backend/internal/config"
@@ -48,7 +49,7 @@ func runMetricsSyncer(
 	gsc services.GSCService,
 	meta services.MetaService,
 	encKey []byte,
-	_ *config.Config,
+	cfg *config.Config,
 ) {
 	log.Println("[worker:MetricsSyncer] sync cycle started")
 
@@ -86,29 +87,68 @@ func runMetricsSyncer(
 			}
 		}
 
-		// 3. Check for Meta (Instagram) credentials
-		metaCred, err := oauthRepo.FindByUserAndProvider(project.UserID, "meta")
-		if err == nil && metaCred != nil && project.IGHandle != "" {
+		// 3. Check for Meta (Instagram/Facebook) credentials
+		accessToken := cfg.MetaPageAccessToken
+		if metaCred, err := oauthRepo.FindByUserAndProvider(project.UserID, "meta"); err == nil && metaCred != nil {
+			if token, decErr := utils.Decrypt(metaCred.AccessTokenEnc, encKey); decErr == nil && token != "" {
+				accessToken = token
+			}
+		}
+		if accessToken != "" && (project.IGHandle != "" || project.FBHandle != "") {
 			log.Printf("[worker:MetricsSyncer] syncing Meta for project %d", project.ID)
-			accessToken, err := utils.Decrypt(metaCred.AccessTokenEnc, encKey)
-			if err == nil {
-				// For a real app, we'd need to find the specific IG User ID associated with the project's handle
-				// For this Phase 3 implementation, we'll try to find all accounts and pick one or use a mock discovery
+			if project.IGHandle != "" {
 				accounts, err := meta.GetIGUserAccounts(accessToken)
 				if err == nil && len(accounts) > 0 {
 					var targetID string
-					if id, ok := accounts[project.IGHandle]; ok {
-						targetID = id
-					} else {
-						// Fallback: pick first available
-						for _, id := range accounts {
-							targetID = id
+					var targetToken string
+					normIG := strings.ToLower(strings.TrimSpace(project.IGHandle))
+					for _, acc := range accounts {
+						if acc.Username == normIG || acc.Name == normIG {
+							targetID = acc.ID
+							targetToken = acc.AccessToken
 							break
 						}
 					}
+					if targetID == "" {
+						targetID = accounts[0].ID
+						targetToken = accounts[0].AccessToken
+					}
 
 					if targetID != "" {
-						sm, err := meta.FetchInstagramMetrics(project.ID, targetID, accessToken)
+						if targetToken == "" {
+							targetToken = accessToken
+						}
+						sm, err := meta.FetchInstagramMetrics(project.ID, targetID, targetToken)
+						if err == nil {
+							metricRepo.CreateSocialMetric(sm)
+						}
+					}
+				}
+			}
+
+			if project.FBHandle != "" {
+				accounts, err := meta.GetFacebookPageAccounts(accessToken)
+				if err == nil && len(accounts) > 0 {
+					var targetID string
+					var targetToken string
+					normFB := strings.ToLower(strings.TrimSpace(project.FBHandle))
+					for _, acc := range accounts {
+						if acc.Username == normFB || acc.Name == normFB {
+							targetID = acc.ID
+							targetToken = acc.AccessToken
+							break
+						}
+					}
+					if targetID == "" {
+						targetID = accounts[0].ID
+						targetToken = accounts[0].AccessToken
+					}
+
+					if targetID != "" {
+						if targetToken == "" {
+							targetToken = accessToken
+						}
+						sm, err := meta.FetchFacebookPageMetrics(project.ID, targetID, targetToken)
 						if err == nil {
 							metricRepo.CreateSocialMetric(sm)
 						}

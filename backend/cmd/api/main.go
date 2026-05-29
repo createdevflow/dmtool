@@ -23,7 +23,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/facebook"
 	"golang.org/x/oauth2/google"
 	"gorm.io/gorm"
 )
@@ -68,6 +67,27 @@ func main() {
 		log.Println("[main] No OPENAI_API_KEY — AI insights will use rule-based engine")
 	}
 
+	metaService := services.NewMetaService()
+	gscOAuthConfig := &oauth2.Config{
+		ClientID:     cfg.GoogleClientID,
+		ClientSecret: cfg.GoogleClientSecret,
+		RedirectURL:  cfg.FrontendURL + "/integrations/callback",
+		Endpoint:     google.Endpoint,
+		Scopes:       []string{"https://www.googleapis.com/auth/webmasters.readonly"},
+	}
+	gscService := services.NewGSCService(gscOAuthConfig)
+
+	metaOAuthConfig := &oauth2.Config{
+		ClientID:     cfg.MetaAppID,
+		ClientSecret: cfg.MetaAppSecret,
+		RedirectURL:  cfg.FrontendURL + "/integrations/callback",
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://www.facebook.com/v19.0/dialog/oauth",
+			TokenURL: "https://graph.facebook.com/v19.0/oauth/access_token",
+		},
+		Scopes: []string{"instagram_basic", "instagram_manage_insights", "pages_show_list", "pages_read_engagement"},
+	}
+
 	// ── 5. Start background workers ─────────────────────────────────────────
 	go workers.StartMetricsSyncer(database, projectRepo, metricRepo, oauthRepo, gscService, metaService, encKey, cfg)
 	go workers.StartHealthScorer(database, projectRepo, seoRepo)
@@ -105,7 +125,7 @@ func main() {
 	})
 
 	// Public SEO audit (no auth required — for landing page demo)
-	seoHandlerPublic := handlers.NewSEOHandler(projectRepo, seoRepo, oauthRepo, gscService, crawlerService, keywordService, encKey)
+	seoHandlerPublic := handlers.NewSEOHandler(projectRepo, seoRepo, oauthRepo, dataForSEOService, crawlerService, keywordService, encKey)
 	r.GET("/api/public/seo-audit", seoHandlerPublic.PublicAudit)
 
 	// ── 8. Auth routes (public, with strict rate limit) ──────────────────────
@@ -120,11 +140,12 @@ func main() {
 	registerProjectRoutes(api, projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOService, rapidAPIService, crawlerService)
 	registerDashboardRoutes(api, projectRepo, metricRepo, insightRepo, seoRepo, taskRepo)
 	registerSEORoutes(api, projectRepo, seoRepo, oauthRepo, dataForSEOService, crawlerService, keywordService, encKey)
-	registerSocialRoutes(api, projectRepo, oauthRepo, metricRepo, rapidAPIService, encKey)
+	registerSocialRoutes(api, projectRepo, oauthRepo, metricRepo, rapidAPIService, socialScraperService, metaService, cfg.MetaPageAccessToken, encKey)
 	registerContentRoutes(api, projectRepo, insightRepo, openaiService, cfg)
 	registerTaskRoutes(api, insightRepo)
 	registerSystemRoutes(api, projectRepo, taskRepo)
 	registerSyncRoutes(api, projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOService, rapidAPIService, crawlerService, encKey)
+	registerIntegrationRoutes(api, projectRepo, oauthRepo, gscOAuthConfig, metaOAuthConfig, encKey, cfg)
 
 	// ── 10. Start server ─────────────────────────────────────────────────────
 	addr := fmt.Sprintf(":%s", cfg.Port)
@@ -200,8 +221,8 @@ func registerAuthRoutes(g *gin.RouterGroup, _ *gorm.DB,
 
 func registerProjectRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, database *gorm.DB, encKey []byte,
 	metricRepo repository.MetricRepository, oauthRepo repository.OAuthRepository, seoRepo repository.SEORepository,
-	gsc services.GSCService, meta services.MetaService, crawler services.SEOCrawlerService, scraper services.SocialScraperService) {
-	h := handlers.NewProjectHandler(projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, gsc, meta, crawler, scraper)
+	dataForSEOSvc services.DataForSEOService, rapidAPISvc services.RapidAPIService, crawler services.SEOCrawlerService) {
+	h := handlers.NewProjectHandler(projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOSvc, rapidAPISvc, crawler)
 
 	g.GET("/projects", h.List)
 	g.POST("/projects", h.Create)
@@ -270,14 +291,18 @@ func registerSocialRoutes(
 	oauthRepo repository.OAuthRepository,
 	metricRepo repository.MetricRepository,
 	rapidAPISvc services.RapidAPIService,
+	scraperService services.SocialScraperService,
+	metaService services.MetaService,
+	metaPageAccessToken string,
 	encKey []byte,
 ) {
-	h := handlers.NewSocialHandler(projectRepo, metricRepo, oauthRepo, rapidAPISvc, encKey)
+	h := handlers.NewSocialHandler(projectRepo, metricRepo, oauthRepo, rapidAPISvc, scraperService, metaService, metaPageAccessToken, encKey)
 
 	g.GET("/social/insights", h.SocialInsights)
 	g.POST("/social/insights/refresh", h.RefreshSocial)
 	g.GET("/social/history", h.SocialHistory)
 	g.GET("/social/profile", h.PublicProfile)
+	g.GET("/social/related", h.RelatedProfiles)
 }
 
 func registerContentRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, insightRepo repository.InsightRepository, openai services.OpenAIService, cfg *config.Config) {
@@ -286,8 +311,7 @@ func registerContentRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRep
 	g.POST("/content/generate", h.Generate)
 }
 
-	g.POST("/content/generate", h.Generate)
-}
+
 
 func registerTaskRoutes(g *gin.RouterGroup, insightRepo repository.InsightRepository) {
 	h := handlers.NewTaskHandler(insightRepo)
@@ -307,7 +331,6 @@ func registerSystemRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepo
 }
 
 func registerSyncRoutes(
-func registerSyncRoutes(
 	g *gin.RouterGroup,
 	projectRepo repository.ProjectRepository,
 	metricRepo repository.MetricRepository,
@@ -321,4 +344,14 @@ func registerSyncRoutes(
 ) {
 	h := handlers.NewSyncHandler(projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOSvc, rapidAPISvc, crawler, encKey)
 	g.POST("/projects/:id/sync", h.SyncProject)
+}
+
+func registerIntegrationRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, oauthRepo repository.OAuthRepository, googleConfig *oauth2.Config, metaConfig *oauth2.Config, encKey []byte, cfg *config.Config) {
+	h := handlers.NewIntegrationHandler(projectRepo, oauthRepo, googleConfig, metaConfig, encKey, cfg)
+	g.GET("/integrations", h.List)
+	g.GET("/integrations/google/auth-url", h.GoogleAuthURL)
+	g.GET("/integrations/google/callback", h.GoogleCallback)
+	g.GET("/integrations/meta/auth-url", h.MetaAuthURL)
+	g.GET("/integrations/meta/callback", h.MetaCallback)
+	g.DELETE("/integrations/:provider", h.Disconnect)
 }

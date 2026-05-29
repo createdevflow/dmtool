@@ -102,7 +102,7 @@ func (h *IntegrationHandler) MetaAuthURL(c *gin.Context) {
 		return
 	}
 
-	url := h.metaConfig.AuthCodeURL("meta", oauth2.AccessTypeOffline)
+	url := h.metaConfig.AuthCodeURL("meta")
 	utils.Success(c, gin.H{"url": url}, nil)
 }
 

@@ -60,9 +60,13 @@ export default function TrafficPage() {
       setProjects(allProjects);
 
       if (allProjects.length > 0) {
+        let savedProjectId = null;
+        try { savedProjectId = parseInt(localStorage.getItem("dmtool_active_project_id") || "0"); } catch (e) {}
+        const defaultProject = allProjects.find((p: any) => p.id === savedProjectId) || allProjects[allProjects.length - 1];
         const selected = targetProjectId
-          ? allProjects.find((p: any) => p.id === targetProjectId) || allProjects[allProjects.length - 1]
-          : allProjects[allProjects.length - 1];
+          ? allProjects.find((p: any) => p.id === targetProjectId) || defaultProject
+          : defaultProject;
+        if (selected) localStorage.setItem("dmtool_active_project_id", selected.id.toString());
         setProject(selected);
 
         const [tRes, mRes, intRes] = await Promise.all([

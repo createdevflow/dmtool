@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"log"
 	"strconv"
 
@@ -11,7 +10,6 @@ import (
 	"backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/oauth2"
 	"gorm.io/gorm"
 )
 

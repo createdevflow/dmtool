@@ -1,12 +1,11 @@
 "use client";
-
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "@/components/ui/toaster";
 import apiClient from "@/lib/api-client";
 
-export default function IntegrationCallbackPage() {
+function CallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
@@ -28,7 +27,13 @@ export default function IntegrationCallbackPage() {
         await apiClient.get(endpoint);
         setStatus("success");
         toast(`${provider === 'meta' ? 'Meta' : 'Google'} integration successful!`, "success");
-        setTimeout(() => router.push("/integrations"), 2000);
+        setTimeout(() => {
+          if (window.opener) {
+            window.close();
+          } else {
+            router.push("/integrations");
+          }
+        }, 2000);
       } catch (err: any) {
         console.error("Integration failed", err);
         setStatus("error");
@@ -83,4 +88,12 @@ export default function IntegrationCallbackPage() {
       )}
     </div>
   );
+}
+
+export default function IntegrationCallbackPage() {
+  return (
+    <React.Suspense fallback={<div className="flex justify-center mt-20"><Loader2 className="w-8 h-8 animate-spin" /></div>}>
+      <CallbackContent />
+    </React.Suspense>
+  )
 }

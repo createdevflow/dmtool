@@ -27,6 +27,13 @@ type Config struct {
 	// OpenAI
 	OpenAIAPIKey string
 
+	// Integrations
+	MetaAppID          string
+	MetaAppSecret      string
+	MetaPageAccessToken string
+	GoogleClientID     string
+	GoogleClientSecret string
+
 	// App
 	AppEnv  string // development | production
 	Version string
@@ -67,6 +74,12 @@ func Load() *Config {
 		RapidAPIKey:        viper.GetString("RAPIDAPI_KEY"),
 
 		OpenAIAPIKey: viper.GetString("OPENAI_API_KEY"),
+
+		MetaAppID:          viper.GetString("META_APP_ID"),
+		MetaAppSecret:      viper.GetString("META_APP_SECRET"),
+		MetaPageAccessToken: viper.GetString("META_PAGE_ACCESS_TOKEN"),
+		GoogleClientID:     viper.GetString("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret: viper.GetString("GOOGLE_CLIENT_SECRET"),
 
 		AppEnv:  viper.GetString("APP_ENV"),
 		Version: viper.GetString("VERSION"),

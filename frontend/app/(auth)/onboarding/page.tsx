@@ -40,23 +40,21 @@ export default function OnboardingPage() {
 
   const toggleSocial = (platform: string) => {
     setActiveSocials(prev => 
-      prev.includes(platform) ? prev.filter(p => p !== platform) : [...prev, platform]
+      prev.includes(platform) ? [] : [platform]
     );
   };
 
   const [projectData, setProjectData] = useState<any>(null);
 
-  const handleAnalyze = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const executeOnboarding = async (formattedUrl: string) => {
     setStep(3);
-    
     setTimeout(() => setLoadingText("Extracting metadata..."), 1500);
     setTimeout(() => setLoadingText("Mapping brand identity..."), 3000);
     setTimeout(() => setLoadingText("Building initial strategy..."), 4500);
 
     try {
       const res = await dashboardApi.onboard({
-        url: url || `https://social-project-${Math.floor(Math.random() * 10000)}.com`,
+        url: formattedUrl || `https://social-project-${Math.floor(Math.random() * 10000)}.com`,
         goal,
         ig_handle: handles.instagram,
         twitter_handle: handles.twitter,
@@ -64,10 +62,7 @@ export default function OnboardingPage() {
         facebook_handle: handles.facebook
       });
 
-
-      
       setProjectData(res.data.data.project);
-
       setTimeout(() => setStep(4), 6000);
     } catch (err: any) {
       console.error(err);
@@ -75,6 +70,64 @@ export default function OnboardingPage() {
       const errorMessage = typeof errorData === 'object' ? errorData.message : errorData;
       setError(errorMessage || "Analysis failed. Please check your inputs.");
       setStep(2);
+    }
+  };
+
+  const handleAnalyze = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const formattedUrl = url;
+
+    const needsSocialLogin = (goal === "social" || goal === "both") && (activeSocials.includes("facebook") || activeSocials.includes("instagram") || activeSocials.includes("linkedin"));
+
+    if (!needsSocialLogin) {
+      executeOnboarding(formattedUrl);
+      return;
+    }
+
+    let loginWindow = window.open('', 'SocialLogin', 'width=600,height=700,left=200,top=100');
+    if (loginWindow) {
+      loginWindow.document.write('<div style="font-family:sans-serif;padding:20px;text-align:center;">Connecting to Social Provider...</div>');
+    }
+
+    try {
+      let authUrl = null;
+      if (activeSocials.includes("linkedin")) {
+         const res = await dashboardApi.getLinkedinAuthUrl();
+         authUrl = res?.data?.data?.url;
+      } else {
+         const res = await dashboardApi.getMetaAuthUrl();
+         authUrl = res?.data?.data?.url;
+      }
+
+      if (authUrl && loginWindow) {
+        loginWindow.location.href = authUrl;
+        
+        const messageHandler = (event: MessageEvent) => {
+          if (event.data?.type === 'OAUTH_SUCCESS') {
+            window.removeEventListener('message', messageHandler);
+            clearInterval(checkWindowTimer);
+            executeOnboarding(formattedUrl);
+          }
+        };
+        window.addEventListener('message', messageHandler);
+
+        const checkWindowTimer = setInterval(() => {
+          if (loginWindow?.closed) {
+            clearInterval(checkWindowTimer);
+            window.removeEventListener('message', messageHandler);
+            // If we haven't advanced past step 2, user cancelled
+            if (step === 2) {
+               setError("Authorization was cancelled. Please try again.");
+            }
+          }
+        }, 500);
+      } else if (loginWindow) {
+        loginWindow.close();
+      }
+    } catch (err) {
+      console.error("Failed to get auth URL", err);
+      if (loginWindow) loginWindow.close();
+      setError("Failed to initialize authentication. Please try again.");
     }
   };
 
@@ -227,19 +280,54 @@ export default function OnboardingPage() {
                          ))}
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                         {activeSocials.map((platform) => (
-                            <Input 
-                              key={platform}
-                              id={`social-input-${platform}`}
-                              placeholder={`@${platform} username`}
-                              className="h-12 rounded-xl bg-slate-50 border-transparent focus:bg-white focus:border-slate-200"
-                              value={(handles as any)[platform]}
-                              onChange={(e) => setHandles({...handles, [platform]: e.target.value})}
-                            />
-                         ))}
-
-                      </div>
+                      {activeSocials.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+                          {activeSocials.includes("instagram") && (
+                            <div className="space-y-2">
+                              <label className="text-[11px] font-semibold text-slate-600">Instagram Handle</label>
+                              <Input
+                                value={handles.instagram}
+                                onChange={(e) => setHandles({...handles, instagram: e.target.value})}
+                                placeholder="username"
+                                className="rounded-xl border-slate-200"
+                              />
+                            </div>
+                          )}
+                          {activeSocials.includes("twitter") && (
+                            <div className="space-y-2">
+                              <label className="text-[11px] font-semibold text-slate-600">Twitter / X Handle</label>
+                              <Input
+                                value={handles.twitter}
+                                onChange={(e) => setHandles({...handles, twitter: e.target.value})}
+                                placeholder="username"
+                                className="rounded-xl border-slate-200"
+                              />
+                            </div>
+                          )}
+                          {activeSocials.includes("linkedin") && (
+                            <div className="space-y-2">
+                              <label className="text-[11px] font-semibold text-slate-600">LinkedIn Page URL</label>
+                              <Input
+                                value={handles.linkedin}
+                                onChange={(e) => setHandles({...handles, linkedin: e.target.value})}
+                                placeholder="linkedin.com/company/..."
+                                className="rounded-xl border-slate-200"
+                              />
+                            </div>
+                          )}
+                          {activeSocials.includes("facebook") && (
+                            <div className="space-y-2">
+                              <label className="text-[11px] font-semibold text-slate-600">Facebook Page URL</label>
+                              <Input
+                                value={handles.facebook}
+                                onChange={(e) => setHandles({...handles, facebook: e.target.value})}
+                                placeholder="facebook.com/page"
+                                className="rounded-xl border-slate-200"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -362,19 +450,6 @@ export default function OnboardingPage() {
                        className="flex-1 h-12 bg-white/10 hover:bg-white/20 text-white font-bold text-sm rounded-xl transition-all border border-white/20 flex items-center justify-center gap-2"
                      >
                         Connect Google
-                     </button>
-                     <button
-                       onClick={async () => {
-                         try {
-                           const res = await dashboardApi.getMetaAuthUrl();
-                           if (res?.data?.data?.url) window.location.href = res.data.data.url;
-                         } catch (err) {
-                           toast("Meta connection currently unavailable", "error");
-                         }
-                       }}
-                       className="flex-1 h-12 bg-white/10 hover:bg-white/20 text-white font-bold text-sm rounded-xl transition-all border border-white/20 flex items-center justify-center gap-2"
-                     >
-                        Connect Meta
                      </button>
                    </div>
                 </div>

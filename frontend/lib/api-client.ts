@@ -133,6 +133,7 @@ export const dashboardApi = {
   getIntegrations: () => apiClient.get("/integrations"),
   getGoogleAuthUrl: () => apiClient.get("/integrations/google/auth-url"),
   getMetaAuthUrl: () => apiClient.get("/integrations/meta/auth-url"),
+  getLinkedinAuthUrl: () => apiClient.get("/integrations/linkedin/auth-url"),
   disconnectIntegration: (provider: string) =>
     apiClient.delete(`/integrations/${provider}`),
 
@@ -146,7 +147,15 @@ export const dashboardApi = {
   toggleAutomation: (id: number) => apiClient.patch(`/system/automations/${id}/toggle`),
   
   getCalendar: (projectId: number) => apiClient.get(`/system/calendar?project_id=${projectId}`),
-  createCalendarEvent: (data: any) => apiClient.post(`/system/calendar/event`, data),
+  createCalendarEvent: (data: any) => {
+    const isFormData = typeof FormData !== "undefined" && data instanceof FormData;
+    return apiClient.post(`/system/calendar/event`, data, isFormData ? { headers: { "Content-Type": "multipart/form-data" } } : undefined);
+  },
+  updateCalendarEvent: (id: number, data: any) => {
+    const isFormData = typeof FormData !== "undefined" && data instanceof FormData;
+    return apiClient.patch(`/system/calendar/event/${id}`, data, isFormData ? { headers: { "Content-Type": "multipart/form-data" } } : undefined);
+  },
+  deleteCalendarEvent: (id: number) => apiClient.delete(`/system/calendar/event/${id}`),
 
   // Sync
   syncProject: (projectId: number) => apiClient.post(`/projects/${projectId}/sync`),

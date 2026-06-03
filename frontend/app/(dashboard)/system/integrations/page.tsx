@@ -67,6 +67,8 @@ export default function IntegrationsPage() {
         res = await dashboardApi.getGoogleAuthUrl();
       } else if (app.provider === "meta") {
         res = await dashboardApi.getMetaAuthUrl();
+      } else if (app.provider === "linkedin") {
+        res = await dashboardApi.getLinkedinAuthUrl();
       }
 
       if (res?.data?.data?.url) {

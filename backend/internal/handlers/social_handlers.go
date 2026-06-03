@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -33,14 +35,16 @@ func resolveTargetAccount(accounts []services.MetaAccount, handle string) (strin
 }
 
 type SocialHandler struct {
-	projectRepo    repository.ProjectRepository
-	metricRepo     repository.MetricRepository
-	oauthRepo      repository.OAuthRepository
-	rapidAPISvc    services.RapidAPIService
-	scraperService services.SocialScraperService
-	metaService    services.MetaService
+	projectRepo         repository.ProjectRepository
+	metricRepo          repository.MetricRepository
+	oauthRepo           repository.OAuthRepository
+	rapidAPISvc         services.RapidAPIService
+	scraperService      services.SocialScraperService
+	metaService         services.MetaService
+	linkedinService     services.LinkedinService
 	metaPageAccessToken string
-	encKey         []byte
+	linkedinAccessToken string
+	encKey              []byte
 }
 
 func NewSocialHandler(
@@ -50,18 +54,22 @@ func NewSocialHandler(
 	rapidAPISvc services.RapidAPIService,
 	scraperService services.SocialScraperService,
 	metaService services.MetaService,
+	linkedinService services.LinkedinService,
 	metaPageAccessToken string,
+	linkedinAccessToken string,
 	encKey []byte,
 ) *SocialHandler {
 	return &SocialHandler{
-		projectRepo:    projectRepo,
-		metricRepo:     metricRepo,
-		oauthRepo:      oauthRepo,
-		rapidAPISvc:    rapidAPISvc,
-		scraperService: scraperService,
-		metaService:    metaService,
+		projectRepo:         projectRepo,
+		metricRepo:          metricRepo,
+		oauthRepo:           oauthRepo,
+		rapidAPISvc:         rapidAPISvc,
+		scraperService:      scraperService,
+		metaService:         metaService,
+		linkedinService:     linkedinService,
 		metaPageAccessToken: metaPageAccessToken,
-		encKey:         encKey,
+		linkedinAccessToken: linkedinAccessToken,
+		encKey:              encKey,
 	}
 }
 
@@ -74,8 +82,15 @@ func (h *SocialHandler) resolveMetaAccessToken(userID uint) string {
 	return h.metaPageAccessToken
 }
 
-// SocialInsights returns the latest social metrics for a project.
-// Priority: real Meta API data → public scrape data → hash-estimated fallback.
+func (h *SocialHandler) resolveLinkedinAccessToken(userID uint) string {
+	if linkedinCred, err := h.oauthRepo.FindByUserAndProvider(userID, "linkedin"); err == nil && linkedinCred != nil {
+		if accessToken, decErr := utils.Decrypt(linkedinCred.AccessTokenEnc, h.encKey); decErr == nil && accessToken != "" {
+			return accessToken
+		}
+	}
+	return h.linkedinAccessToken
+}
+
 func (h *SocialHandler) SocialInsights(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 	projectIDStr := c.Query("project_id")
@@ -110,6 +125,13 @@ func (h *SocialHandler) SocialInsights(c *gin.Context) {
 			}
 		}
 		needsRealData = allSimulated
+		if !needsRealData {
+			latest := metrics[0]
+			emptyLiveSnapshot := latest.Reach == 0 && latest.ProfileVisits == 0 && latest.ExternalLinkTaps == 0 && latest.EngagementCount == 0
+			if emptyLiveSnapshot {
+				needsRealData = true
+			}
+		}
 	}
 
 	// Try real Meta API automatically if we only have simulated data
@@ -151,20 +173,43 @@ func (h *SocialHandler) SocialInsights(c *gin.Context) {
 		}
 	}
 
+	// Try LinkedIn automatically when credentials exist and LinkedIn metrics are not already present
+	linkedinToken := h.resolveLinkedinAccessToken(userID)
+	hasLinkedinMetric := false
+	for _, m := range metrics {
+		if strings.EqualFold(m.Platform, "linkedin") || strings.EqualFold(m.Platform, "LinkedIn") {
+			hasLinkedinMetric = true
+			break
+		}
+	}
+	if !hasLinkedinMetric && linkedinToken != "" {
+		if sm, err := h.linkedinService.FetchLinkedInMetrics(project.ID, project.LinkedinHandle, linkedinToken); err == nil && sm != nil {
+			h.metricRepo.CreateSocialMetric(sm)
+			metrics = append(metrics, *sm)
+		}
+	}
+
 	// If no real data in DB and we have handles, try public scraping
 	if len(metrics) == 0 && project.IGHandle != "" {
 		scraped, err := h.scraperService.FetchInstagramPublic(project.IGHandle)
 		if err == nil && scraped != nil {
 			sm := &models.SocialMetric{
-				ProjectID:       pid,
-				Platform:        "Instagram",
-				Followers:       scraped.Followers,
-				Reach:           int64(float64(scraped.Followers) * 0.15), // estimated reach ~15% of followers
-				Engagement:      3.2,
-				EngagementCount: int64(float64(scraped.Followers) * 0.032),
-				Status:          "stable",
-				IsSimulated:     scraped.IsSimulated,
-				RecordedAt:      time.Now(),
+				ProjectID:         pid,
+				Platform:          "Instagram",
+				Followers:         scraped.Followers,
+				FollowingCount:    scraped.Following,
+				PostsCount:        scraped.PostCount,
+				DisplayName:       scraped.FullName,
+				Biography:         scraped.Bio,
+				ProfilePictureURL: scraped.ProfilePic,
+				Reach:             int64(float64(scraped.Followers) * 0.15), // estimated reach ~15% of followers
+				Engagement:        3.2,
+				EngagementCount:   int64(float64(scraped.Followers) * 0.032),
+				ProfileVisits:     int64(float64(scraped.Followers) * 0.05),
+				ExternalLinkTaps:  int64(float64(scraped.Followers) * 0.01),
+				Status:            "stable",
+				IsSimulated:       scraped.IsSimulated,
+				RecordedAt:        time.Now(),
 			}
 			// Save to DB for history
 			h.metricRepo.CreateSocialMetric(sm)
@@ -181,7 +226,9 @@ func (h *SocialHandler) SocialInsights(c *gin.Context) {
 			metrics = append(metrics, models.SocialMetric{
 				Platform: "Instagram", Followers: followers, Reach: reach,
 				Engagement: 4.2, EngagementCount: int64(float64(reach) * 0.042),
-				Status: "growing", IsSimulated: true,
+				ProfileVisits:    int64(float64(reach) * 0.05),
+				ExternalLinkTaps: int64(float64(reach) * 0.01),
+				Status:           "growing", IsSimulated: true,
 			})
 		} else if project.FBHandle != "" {
 			h := utils.HashString(project.FBHandle)
@@ -190,7 +237,9 @@ func (h *SocialHandler) SocialInsights(c *gin.Context) {
 			metrics = append(metrics, models.SocialMetric{
 				Platform: "Facebook", Followers: followers, Reach: reach,
 				Engagement: 3.6, EngagementCount: int64(float64(reach) * 0.036),
-				Status: "growing", IsSimulated: true,
+				ProfileVisits:    int64(float64(reach) * 0.04),
+				ExternalLinkTaps: int64(float64(reach) * 0.008),
+				Status:           "growing", IsSimulated: true,
 			})
 		}
 	}
@@ -204,6 +253,8 @@ func (h *SocialHandler) SocialInsights(c *gin.Context) {
 			show = project.IGHandle != ""
 		case "Facebook", "facebook":
 			show = project.FBHandle != ""
+		case "LinkedIn", "linkedin":
+			show = true
 		}
 		if show {
 			filtered = append(filtered, m)
@@ -295,20 +346,45 @@ func (h *SocialHandler) RefreshSocial(c *gin.Context) {
 		}
 	}
 
+	// 1.5. Try LinkedIn API if handle exists
+	linkedinToken := h.resolveLinkedinAccessToken(userID)
+	if linkedinToken != "" {
+		fmt.Printf("[RefreshSocial] Calling FetchLinkedInMetrics with token (len=%d)\n", len(linkedinToken))
+		sm, err := h.linkedinService.FetchLinkedInMetrics(project.ID, project.LinkedinHandle, linkedinToken)
+		if err == nil && sm != nil {
+			fmt.Printf("[RefreshSocial] LinkedIn fetch succeeded: %d followers\n", sm.Followers)
+			h.metricRepo.CreateSocialMetric(sm)
+			utils.Success(c, sm, &utils.ResponseMeta{Message: "Live LinkedIn metrics synced"})
+			return
+		}
+		if err != nil {
+			fmt.Printf("[RefreshSocial] LinkedIn fetch failed: %v\n", err)
+			utils.IntegrationError(c, "LinkedIn metrics refresh failed. Reconnect LinkedIn to restore live analytics.")
+			return
+		}
+	} else {
+		fmt.Printf("[RefreshSocial] No LinkedIn token found for user %d\n", userID)
+	}
+
 	// 2. Fall back to public Instagram scrape
 	if project.IGHandle != "" {
 		scraped, err := h.scraperService.FetchInstagramPublic(project.IGHandle)
 		if err == nil && scraped != nil && scraped.Followers > 0 {
 			sm := &models.SocialMetric{
-				ProjectID:       project.ID,
-				Platform:        "Instagram",
-				Followers:       scraped.Followers,
-				Reach:           int64(float64(scraped.Followers) * 0.15),
-				Engagement:      3.2,
-				EngagementCount: int64(float64(scraped.Followers) * 0.032),
-				Status:          "stable",
-				IsSimulated:     scraped.IsSimulated,
-				RecordedAt:      time.Now(),
+				ProjectID:         project.ID,
+				Platform:          "Instagram",
+				Followers:         scraped.Followers,
+				FollowingCount:    scraped.Following,
+				PostsCount:        scraped.PostCount,
+				DisplayName:       scraped.FullName,
+				Biography:         scraped.Bio,
+				ProfilePictureURL: scraped.ProfilePic,
+				Reach:             int64(float64(scraped.Followers) * 0.15),
+				Engagement:        3.2,
+				EngagementCount:   int64(float64(scraped.Followers) * 0.032),
+				Status:            "stable",
+				IsSimulated:       scraped.IsSimulated,
+				RecordedAt:        time.Now(),
 			}
 			h.metricRepo.CreateSocialMetric(sm)
 			msg := "Metrics fetched from public Instagram profile"
@@ -798,7 +874,7 @@ func (h *SocialHandler) RelatedProfiles(c *gin.Context) {
 	// -------------------------------------------------------------
 	// DYNAMIC REAL DATA FETCHING VIA META API BUSINESS DISCOVERY
 	// -------------------------------------------------------------
-	
+
 	// Collect handles to fetch
 	var handlesToFetch []string
 	for _, r := range related {
@@ -814,7 +890,7 @@ func (h *SocialHandler) RelatedProfiles(c *gin.Context) {
 				if targetToken == "" {
 					targetToken = accessToken
 				}
-				
+
 				// Fetch real data for these handles
 				liveData, err := h.metaService.FetchCompetitorData(targetID, targetToken, handlesToFetch)
 				if err == nil && len(liveData) > 0 {

@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend/internal/config"
@@ -59,6 +62,8 @@ func main() {
 	crawlerService := services.NewSEOCrawlerService()
 	keywordService := services.NewKeywordService()
 	socialScraperService := services.NewSocialScraperService()
+	metaService := services.NewMetaService()
+	linkedinService := services.NewLinkedinService()
 
 	var openaiService services.OpenAIService
 	if cfg.OpenAIAPIKey != "" {
@@ -67,7 +72,9 @@ func main() {
 		log.Println("[main] No OPENAI_API_KEY — AI insights will use rule-based engine")
 	}
 
-	metaService := services.NewMetaService()
+	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
+		log.Fatalf("[main] failed to create upload directory: %v", err)
+	}
 	gscOAuthConfig := &oauth2.Config{
 		ClientID:     cfg.GoogleClientID,
 		ClientSecret: cfg.GoogleClientSecret,
@@ -85,11 +92,23 @@ func main() {
 			AuthURL:  "https://www.facebook.com/v19.0/dialog/oauth",
 			TokenURL: "https://graph.facebook.com/v19.0/oauth/access_token",
 		},
-		Scopes: []string{"instagram_basic", "instagram_manage_insights", "pages_show_list", "pages_read_engagement"},
+		Scopes: []string{"instagram_basic", "instagram_manage_insights", "pages_show_list", "pages_read_engagement", "pages_manage_posts", "pages_manage_metadata", "instagram_content_publish"},
+	}
+
+	linkedinOAuthConfig := &oauth2.Config{
+		ClientID:     cfg.LinkedinClientID,
+		ClientSecret: cfg.LinkedinClientSecret,
+		RedirectURL:  cfg.FrontendURL + "/integrations/callback",
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://www.linkedin.com/oauth/v2/authorization",
+			TokenURL: "https://www.linkedin.com/oauth/v2/accessToken",
+		},
+		Scopes: strings.Split(strings.TrimSpace(cfg.LinkedinScopes), ","),
 	}
 
 	// ── 5. Start background workers ─────────────────────────────────────────
 	go workers.StartMetricsSyncer(database, projectRepo, metricRepo, oauthRepo, gscService, metaService, encKey, cfg)
+	go workers.StartCalendarPublisher(taskRepo, projectRepo, oauthRepo, metaService, linkedinService, encKey, cfg)
 	go workers.StartHealthScorer(database, projectRepo, seoRepo)
 	go workers.StartInsightGenerator(database, projectRepo, metricRepo, insightRepo, openaiService, cfg)
 
@@ -106,6 +125,7 @@ func main() {
 	r.Use(middleware.CORS(cfg.AllowedOrigins))
 	r.Use(middleware.Logger())
 	r.Use(middleware.RateLimitAPI())
+	r.Static("/uploads", filepath.Clean(cfg.UploadDir))
 
 	// ── 7. Health check (public) ─────────────────────────────────────────────
 	startTime := time.Now()
@@ -140,12 +160,12 @@ func main() {
 	registerProjectRoutes(api, projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOService, rapidAPIService, crawlerService)
 	registerDashboardRoutes(api, projectRepo, metricRepo, insightRepo, seoRepo, taskRepo)
 	registerSEORoutes(api, projectRepo, seoRepo, oauthRepo, dataForSEOService, crawlerService, keywordService, encKey)
-	registerSocialRoutes(api, projectRepo, oauthRepo, metricRepo, rapidAPIService, socialScraperService, metaService, cfg.MetaPageAccessToken, encKey)
+	registerSocialRoutes(api, projectRepo, oauthRepo, metricRepo, rapidAPIService, socialScraperService, metaService, linkedinService, cfg.MetaPageAccessToken, os.Getenv("LINKEDIN_ACCESS_TOKEN"), encKey)
 	registerContentRoutes(api, projectRepo, insightRepo, openaiService, cfg)
 	registerTaskRoutes(api, insightRepo)
-	registerSystemRoutes(api, projectRepo, taskRepo)
+	registerSystemRoutes(api, projectRepo, taskRepo, cfg)
 	registerSyncRoutes(api, projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOService, rapidAPIService, crawlerService, encKey)
-	registerIntegrationRoutes(api, projectRepo, oauthRepo, gscOAuthConfig, metaOAuthConfig, encKey, cfg)
+	registerIntegrationRoutes(api, projectRepo, oauthRepo, gscOAuthConfig, metaOAuthConfig, linkedinOAuthConfig, encKey, cfg)
 
 	// ── 10. Start server ─────────────────────────────────────────────────────
 	addr := fmt.Sprintf(":%s", cfg.Port)
@@ -293,10 +313,12 @@ func registerSocialRoutes(
 	rapidAPISvc services.RapidAPIService,
 	scraperService services.SocialScraperService,
 	metaService services.MetaService,
+	linkedinService services.LinkedinService,
 	metaPageAccessToken string,
+	linkedinAccessToken string,
 	encKey []byte,
 ) {
-	h := handlers.NewSocialHandler(projectRepo, metricRepo, oauthRepo, rapidAPISvc, scraperService, metaService, metaPageAccessToken, encKey)
+	h := handlers.NewSocialHandler(projectRepo, metricRepo, oauthRepo, rapidAPISvc, scraperService, metaService, linkedinService, metaPageAccessToken, linkedinAccessToken, encKey)
 
 	g.GET("/social/insights", h.SocialInsights)
 	g.POST("/social/insights/refresh", h.RefreshSocial)
@@ -319,8 +341,8 @@ func registerTaskRoutes(g *gin.RouterGroup, insightRepo repository.InsightReposi
 	g.PATCH("/tasks/:id/toggle", h.Toggle)
 }
 
-func registerSystemRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, taskRepo repository.TaskRepository) {
-	h := handlers.NewSystemHandler(taskRepo, projectRepo)
+func registerSystemRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, taskRepo repository.TaskRepository, cfg *config.Config) {
+	h := handlers.NewSystemHandler(taskRepo, projectRepo, cfg)
 
 	g.GET("/system/automations", h.GetAutomations)
 	g.POST("/system/automations", h.CreateAutomation)
@@ -328,6 +350,8 @@ func registerSystemRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepo
 	
 	g.GET("/system/calendar", h.GetCalendar)
 	g.POST("/system/calendar/event", h.CreateCalendarEvent)
+	g.PATCH("/system/calendar/event/:id", h.UpdateCalendarEvent)
+	g.DELETE("/system/calendar/event/:id", h.DeleteCalendarEvent)
 }
 
 func registerSyncRoutes(
@@ -346,12 +370,14 @@ func registerSyncRoutes(
 	g.POST("/projects/:id/sync", h.SyncProject)
 }
 
-func registerIntegrationRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, oauthRepo repository.OAuthRepository, googleConfig *oauth2.Config, metaConfig *oauth2.Config, encKey []byte, cfg *config.Config) {
-	h := handlers.NewIntegrationHandler(projectRepo, oauthRepo, googleConfig, metaConfig, encKey, cfg)
+func registerIntegrationRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, oauthRepo repository.OAuthRepository, googleConfig *oauth2.Config, metaConfig *oauth2.Config, linkedinConfig *oauth2.Config, encKey []byte, cfg *config.Config) {
+	h := handlers.NewIntegrationHandler(projectRepo, oauthRepo, googleConfig, metaConfig, linkedinConfig, encKey, cfg)
 	g.GET("/integrations", h.List)
 	g.GET("/integrations/google/auth-url", h.GoogleAuthURL)
 	g.GET("/integrations/google/callback", h.GoogleCallback)
 	g.GET("/integrations/meta/auth-url", h.MetaAuthURL)
 	g.GET("/integrations/meta/callback", h.MetaCallback)
+	g.GET("/integrations/linkedin/auth-url", h.LinkedinAuthURL)
+	g.GET("/integrations/linkedin/callback", h.LinkedinCallback)
 	g.DELETE("/integrations/:provider", h.Disconnect)
 }

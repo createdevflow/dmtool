@@ -1,10 +1,12 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,8 @@ type MetaService interface {
 	FetchFacebookPageMetrics(projectID uint, pageID, accessToken string) (*models.SocialMetric, error)
 	GetIGUserAccounts(accessToken string) ([]MetaAccount, error)
 	GetFacebookPageAccounts(accessToken string) ([]MetaAccount, error)
+	PublishInstagramContent(igUserID, accessToken string, task *models.Task) (string, error)
+	PublishFacebookContent(pageID, accessToken string, task *models.Task) (string, error)
 	FetchCompetitorData(igUserID, accessToken string, handles []string) (map[string]map[string]interface{}, error)
 }
 
@@ -34,8 +38,281 @@ type metaService struct {
 
 func NewMetaService() MetaService {
 	return &metaService{
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{Timeout: 60 * time.Second},
 	}
+}
+
+func (s *metaService) PublishInstagramContent(igUserID, accessToken string, task *models.Task) (string, error) {
+	if igUserID == "" {
+		return "", fmt.Errorf("instagram user id is required")
+	}
+	if accessToken == "" {
+		return "", fmt.Errorf("access token is required")
+	}
+	if task == nil {
+		return "", fmt.Errorf("task is required")
+	}
+	if task.AssetURL == "" {
+		return "", fmt.Errorf("missing published asset url")
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(task.ContentType))
+	assetURL := task.AssetURL
+	assetMime := strings.ToLower(strings.TrimSpace(task.AssetMime))
+	assetName := strings.ToLower(strings.TrimSpace(task.AssetName))
+	videoLike := strings.Contains(assetMime, "video") || strings.HasSuffix(assetName, ".mp4") || strings.HasSuffix(assetName, ".mov") || strings.HasSuffix(assetName, ".m4v")
+	caption := strings.TrimSpace(task.Caption)
+	if caption == "" {
+		caption = task.Title
+	}
+	if tags := strings.TrimSpace(task.Tags); tags != "" {
+		caption = caption + "\n\n" + tags
+	}
+
+	containerValues := url.Values{}
+	containerValues.Set("caption", caption)
+	containerValues.Set("access_token", accessToken)
+
+	switch contentType {
+	case "story":
+		if videoLike {
+			containerValues.Set("media_type", "STORIES")
+			containerValues.Set("video_url", assetURL)
+		} else {
+			containerValues.Set("media_type", "STORIES")
+			containerValues.Set("image_url", assetURL)
+		}
+	case "reel":
+		if !videoLike {
+			return "", fmt.Errorf("reels require a video file")
+		}
+		containerValues.Set("media_type", "REELS")
+		containerValues.Set("video_url", assetURL)
+		containerValues.Set("share_to_feed", "true")
+	default:
+		if videoLike {
+			containerValues.Set("media_type", "VIDEO")
+			containerValues.Set("video_url", assetURL)
+		} else {
+			containerValues.Set("image_url", assetURL)
+		}
+	}
+
+	containerID, err := s.postFormAndParseID(fmt.Sprintf("https://graph.facebook.com/v19.0/%s/media", igUserID), containerValues)
+	if err != nil {
+		return "", err
+	}
+
+	if videoLike || contentType == "reel" || contentType == "story" {
+		if err := s.waitForContainerReady(containerID, accessToken); err != nil {
+			return "", err
+		}
+	}
+
+	publishValues := url.Values{}
+	publishValues.Set("creation_id", containerID)
+	publishValues.Set("access_token", accessToken)
+	return s.postFormAndParseID(fmt.Sprintf("https://graph.facebook.com/v19.0/%s/media_publish", igUserID), publishValues)
+}
+
+func (s *metaService) PublishFacebookContent(pageID, accessToken string, task *models.Task) (string, error) {
+	if pageID == "" {
+		return "", fmt.Errorf("facebook page id is required")
+	}
+	if accessToken == "" {
+		return "", fmt.Errorf("access token is required")
+	}
+	if task == nil {
+		return "", fmt.Errorf("task is required")
+	}
+	if task.AssetURL == "" {
+		return "", fmt.Errorf("missing published asset url")
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(task.ContentType))
+	assetURL := task.AssetURL
+	assetMime := strings.ToLower(strings.TrimSpace(task.AssetMime))
+	assetName := strings.ToLower(strings.TrimSpace(task.AssetName))
+	videoLike := strings.Contains(assetMime, "video") || strings.HasSuffix(assetName, ".mp4") || strings.HasSuffix(assetName, ".mov") || strings.HasSuffix(assetName, ".m4v")
+	caption := strings.TrimSpace(task.Caption)
+	if caption == "" {
+		caption = task.Title
+	}
+
+	if tags := strings.TrimSpace(task.Tags); tags != "" {
+		caption = caption + "\n\n" + tags
+	}
+
+	values := url.Values{}
+	values.Set("access_token", accessToken)
+
+	var apiURL string
+
+	switch contentType {
+	case "story":
+		if videoLike {
+			return s.publishFacebookVideoStory(pageID, accessToken, assetURL)
+		} else {
+			apiURL = fmt.Sprintf("https://graph.facebook.com/v19.0/%s/photo_stories", pageID)
+			values.Set("photo_url", assetURL)
+		}
+	case "reel":
+		if !videoLike {
+			return "", fmt.Errorf("reels require a video file")
+		}
+		apiURL = fmt.Sprintf("https://graph.facebook.com/v19.0/%s/videos", pageID)
+		values.Set("file_url", assetURL)
+		values.Set("description", caption)
+	default:
+		if videoLike {
+			apiURL = fmt.Sprintf("https://graph.facebook.com/v19.0/%s/videos", pageID)
+			values.Set("file_url", assetURL)
+			values.Set("description", caption)
+		} else {
+			apiURL = fmt.Sprintf("https://graph.facebook.com/v19.0/%s/photos", pageID)
+			values.Set("url", assetURL)
+			values.Set("message", caption)
+		}
+	}
+
+	return s.postFormAndParseID(apiURL, values)
+}
+
+func (s *metaService) publishFacebookVideoStory(pageID, accessToken, assetURL string) (string, error) {
+	resp, err := http.Get(assetURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to download video: %v", err)
+	}
+	defer resp.Body.Close()
+	videoBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read video: %v", err)
+	}
+	fileSize := len(videoBytes)
+
+	startURL := fmt.Sprintf("https://graph.facebook.com/v19.0/%s/video_stories", pageID)
+	startVals := url.Values{}
+	startVals.Set("access_token", accessToken)
+	startVals.Set("upload_phase", "start")
+	startVals.Set("file_size", fmt.Sprintf("%d", fileSize))
+
+	startResp, err := s.client.PostForm(startURL, startVals)
+	if err != nil {
+		return "", fmt.Errorf("start phase failed: %v", err)
+	}
+	defer startResp.Body.Close()
+	startBody, _ := io.ReadAll(startResp.Body)
+	if startResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("start phase error: %s", string(startBody))
+	}
+
+	var startData struct {
+		VideoID   string `json:"video_id"`
+		UploadURL string `json:"upload_url"`
+	}
+	if err := json.Unmarshal(startBody, &startData); err != nil {
+		return "", fmt.Errorf("failed to parse start phase response: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", startData.UploadURL, bytes.NewReader(videoBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to create upload request: %v", err)
+	}
+	req.Header.Set("Authorization", "OAuth "+accessToken)
+	req.Header.Set("Offset", "0")
+	req.Header.Set("X-Entity-Length", fmt.Sprintf("%d", fileSize))
+
+	uploadResp, err := s.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload phase failed: %v", err)
+	}
+	defer uploadResp.Body.Close()
+	uploadBody, _ := io.ReadAll(uploadResp.Body)
+	if uploadResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("upload phase error: %s", string(uploadBody))
+	}
+
+	finishURL := fmt.Sprintf("https://graph.facebook.com/v19.0/%s/video_stories", pageID)
+	finishVals := url.Values{}
+	finishVals.Set("access_token", accessToken)
+	finishVals.Set("upload_phase", "finish")
+	finishVals.Set("video_id", startData.VideoID)
+
+	finishResp, err := s.client.PostForm(finishURL, finishVals)
+	if err != nil {
+		return "", fmt.Errorf("finish phase failed: %v", err)
+	}
+	defer finishResp.Body.Close()
+	finishBody, _ := io.ReadAll(finishResp.Body)
+	if finishResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("finish phase error: %s", string(finishBody))
+	}
+
+	var finishData struct {
+		Success bool `json:"success"`
+	}
+	json.Unmarshal(finishBody, &finishData)
+	if !finishData.Success {
+		return "", fmt.Errorf("finish phase returned false: %s", string(finishBody))
+	}
+
+	return startData.VideoID, nil
+}
+
+func (s *metaService) postFormAndParseID(apiURL string, values url.Values) (string, error) {
+	resp, err := s.client.PostForm(apiURL, values)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("meta api error: %s", string(body))
+	}
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", err
+	}
+	if payload.ID == "" {
+		return "", fmt.Errorf("meta api did not return an id")
+	}
+	return payload.ID, nil
+}
+
+func (s *metaService) waitForContainerReady(containerID, accessToken string) error {
+	statusURL := fmt.Sprintf("https://graph.facebook.com/v19.0/%s?fields=status_code,status&access_token=%s", containerID, accessToken)
+	for i := 0; i < 12; i++ {
+		resp, err := s.client.Get(statusURL)
+		if err != nil {
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		var payload struct {
+			StatusCode string `json:"status_code"`
+			Status     string `json:"status"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		status := strings.ToUpper(strings.TrimSpace(payload.StatusCode))
+		if status == "FINISHED" || strings.ToUpper(strings.TrimSpace(payload.Status)) == "FINISHED" {
+			return nil
+		}
+		if status == "ERROR" || strings.ToUpper(strings.TrimSpace(payload.Status)) == "ERROR" {
+			return fmt.Errorf("instagram container processing failed")
+		}
+		time.Sleep(5 * time.Second)
+	}
+	return fmt.Errorf("instagram container did not finish processing in time")
 }
 
 func (s *metaService) GetIGUserAccounts(accessToken string) ([]MetaAccount, error) {
@@ -144,6 +421,38 @@ func (s *metaService) GetFacebookPageAccounts(accessToken string) ([]MetaAccount
 }
 
 func (s *metaService) FetchInstagramMetrics(projectID uint, igUserID, accessToken string) (*models.SocialMetric, error) {
+	// Attempt to resolve numeric ID if igUserID is not numeric
+	if _, err := strconv.ParseInt(igUserID, 10, 64); err != nil {
+		respAccounts, err := http.Get(fmt.Sprintf("https://graph.facebook.com/v19.0/me/accounts?access_token=%s", accessToken))
+		if err == nil {
+			defer respAccounts.Body.Close()
+			var data struct {
+				Data []struct {
+					ID          string `json:"id"`
+					AccessToken string `json:"access_token"`
+				} `json:"data"`
+			}
+			json.NewDecoder(respAccounts.Body).Decode(&data)
+			if len(data.Data) > 0 {
+				pageID := data.Data[0].ID
+				pageToken := data.Data[0].AccessToken
+				respIG, err := http.Get(fmt.Sprintf("https://graph.facebook.com/v19.0/%s?fields=instagram_business_account&access_token=%s", pageID, pageToken))
+				if err == nil {
+					defer respIG.Body.Close()
+					var igData struct {
+						InstagramBusinessAccount struct {
+							ID string `json:"id"`
+						} `json:"instagram_business_account"`
+					}
+					json.NewDecoder(respIG.Body).Decode(&igData)
+					if igData.InstagramBusinessAccount.ID != "" {
+						igUserID = igData.InstagramBusinessAccount.ID
+					}
+				}
+			}
+		}
+	}
+
 	fields := "followers_count,follows_count,media_count,biography,website,name,username,profile_picture_url"
 	apiURL := fmt.Sprintf("https://graph.facebook.com/v19.0/%s?fields=%s&access_token=%s", igUserID, fields, accessToken)
 
@@ -212,13 +521,13 @@ func (s *metaService) FetchInstagramMetrics(projectID uint, igUserID, accessToke
 		return totals
 	}
 
-	dailyInsights := fetchInsightsWindow(1, "reach", "profile_views", "get_directions_clicks")
+	dailyInsights := fetchInsightsWindow(1, "reach", "profile_views")
 	weeklyInsights := fetchInsightsWindow(7, "reach")
 	monthlyInsights := fetchInsightsWindow(30, "reach")
 
 	currentReach := dailyInsights["reach"]
 	profileVisits := dailyInsights["profile_views"]
-	linkTaps := dailyInsights["get_directions_clicks"] // This is a proxy for website clicks
+	linkTaps := int64(0)
 	weeklyReach := weeklyInsights["reach"]
 	monthlyReach := monthlyInsights["reach"]
 
@@ -253,6 +562,8 @@ func (s *metaService) FetchInstagramMetrics(projectID uint, igUserID, accessToke
 				Reach        int64  `json:"reach"`
 				Engagement   int64  `json:"engagement"`
 				Interactions int    `json:"interactions"`
+				Likes        int    `json:"likes"`
+				Comments     int    `json:"comments"`
 				Date         string `json:"date"`
 				Img          string `json:"img"`
 				Permalink    string `json:"permalink"`
@@ -294,6 +605,8 @@ func (s *metaService) FetchInstagramMetrics(projectID uint, igUserID, accessToke
 					Reach:        m.Reach,
 					Engagement:   m.Engagement,
 					Interactions: interactions,
+					Likes:        m.LikeCount,
+					Comments:     m.CommentsCount,
 					Date:         dateStr,
 					Img:          img,
 					Permalink:    m.Permalink,
@@ -383,7 +696,7 @@ func (s *metaService) FetchInstagramMetrics(projectID uint, igUserID, accessToke
 	}
 
 	// 4b. Fetch audience demographics and location insights.
-	audienceInsightsURL := fmt.Sprintf("https://graph.facebook.com/v19.0/%s/insights?metric=audience_gender_age,audience_country,audience_city&period=lifetime&access_token=%s", igUserID, accessToken)
+	audienceInsightsURL := fmt.Sprintf("https://graph.facebook.com/v19.0/%s/insights?metric=follower_demographics&period=lifetime&access_token=%s", igUserID, accessToken)
 	resp5, err := s.client.Get(audienceInsightsURL)
 	if err == nil && resp5 != nil && resp5.StatusCode == http.StatusOK {
 		var audienceData struct {
@@ -531,7 +844,7 @@ func (s *metaService) FetchFacebookPageMetrics(projectID uint, pageID, accessTok
 		followers = data.FollowersCount
 	}
 
-	insightsURL := fmt.Sprintf("https://graph.facebook.com/v19.0/%s/insights?metric=page_impressions,page_engaged_users&period=day&access_token=%s", pageID, accessToken)
+	insightsURL := fmt.Sprintf("https://graph.facebook.com/v19.0/%s/insights?metric=page_impressions,page_impressions_unique&period=day&access_token=%s", pageID, accessToken)
 	resp2, err := s.client.Get(insightsURL)
 	var reach int64
 	if err == nil && resp2 != nil {

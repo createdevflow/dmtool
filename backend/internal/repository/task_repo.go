@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"backend/internal/models"
 	"gorm.io/gorm"
 )
@@ -8,6 +10,7 @@ import (
 type TaskRepository interface {
 	Create(task *models.Task) error
 	FindAllByProject(projectID uint) ([]models.Task, error)
+	FindDueScheduledTasks(before time.Time) ([]models.Task, error)
 	FindByID(id uint) (*models.Task, error)
 	Update(task *models.Task) error
 	Delete(id uint) error
@@ -28,6 +31,15 @@ func (r *gormTaskRepository) Create(task *models.Task) error {
 func (r *gormTaskRepository) FindAllByProject(projectID uint) ([]models.Task, error) {
 	var tasks []models.Task
 	err := r.db.Where("project_id = ?", projectID).Order("created_at desc").Find(&tasks).Error
+	return tasks, err
+}
+
+func (r *gormTaskRepository) FindDueScheduledTasks(before time.Time) ([]models.Task, error) {
+	var tasks []models.Task
+	err := r.db.
+		Where("due_date IS NOT NULL AND due_date <= ? AND completed = ? AND publish_status = ?", before, false, "scheduled").
+		Order("due_date asc").
+		Find(&tasks).Error
 	return tasks, err
 }
 

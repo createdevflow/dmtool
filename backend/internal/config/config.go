@@ -18,6 +18,8 @@ type Config struct {
 	EncryptionKey    string // 32 bytes, hex or raw
 	AllowedOrigins   []string
 	FrontendURL      string
+	PublicBaseURL    string
+	UploadDir        string
 
 	// Data Providers
 	DataForSEOLogin    string
@@ -33,6 +35,9 @@ type Config struct {
 	MetaPageAccessToken string
 	GoogleClientID     string
 	GoogleClientSecret string
+	LinkedinClientID   string
+	LinkedinClientSecret string
+	LinkedinScopes       string
 
 	// App
 	AppEnv  string // development | production
@@ -58,7 +63,10 @@ func Load() *Config {
 	viper.SetDefault("VERSION", "2.0.0")
 	viper.SetDefault("DATABASE_URL", "file:dmtool.db")
 	viper.SetDefault("FRONTEND_URL", "http://localhost:3000")
+	viper.SetDefault("PUBLIC_BASE_URL", "http://localhost:8080")
+	viper.SetDefault("UPLOAD_DIR", "./uploads")
 	viper.SetDefault("ALLOWED_ORIGINS", "http://localhost:3000")
+	viper.SetDefault("LINKEDIN_SCOPES", "r_liteprofile,r_emailaddress,w_member_social")
 
 	cfg := &Config{
 		Port:             viper.GetString("PORT"),
@@ -67,6 +75,8 @@ func Load() *Config {
 		JWTPublicKeyPEM:  viper.GetString("JWT_PUBLIC_KEY"),
 		EncryptionKey:    viper.GetString("ENCRYPTION_KEY"),
 		FrontendURL:      viper.GetString("FRONTEND_URL"),
+		PublicBaseURL:    viper.GetString("PUBLIC_BASE_URL"),
+		UploadDir:        viper.GetString("UPLOAD_DIR"),
 		AllowedOrigins:   strings.Split(viper.GetString("ALLOWED_ORIGINS"), ","),
 
 		DataForSEOLogin:    viper.GetString("DATAFORSEO_LOGIN"),
@@ -80,6 +90,9 @@ func Load() *Config {
 		MetaPageAccessToken: viper.GetString("META_PAGE_ACCESS_TOKEN"),
 		GoogleClientID:     viper.GetString("GOOGLE_CLIENT_ID"),
 		GoogleClientSecret: viper.GetString("GOOGLE_CLIENT_SECRET"),
+		LinkedinClientID:   viper.GetString("LINKEDIN_CLIENT_ID"),
+		LinkedinClientSecret: viper.GetString("LINKEDIN_CLIENT_SECRET"),
+		LinkedinScopes:     viper.GetString("LINKEDIN_SCOPES"),
 
 		AppEnv:  viper.GetString("APP_ENV"),
 		Version: viper.GetString("VERSION"),

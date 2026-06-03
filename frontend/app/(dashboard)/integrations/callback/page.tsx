@@ -13,7 +13,8 @@ function CallbackContent() {
 
   useEffect(() => {
     const code = searchParams.get("code");
-    const provider = searchParams.get("state");
+    const rawState = searchParams.get("state");
+    const provider = rawState?.includes(":") ? rawState.split(":")[0] : rawState;
 
     if (!code || !provider) {
       setStatus("error");
@@ -26,9 +27,11 @@ function CallbackContent() {
         const endpoint = `/integrations/${provider}/callback?code=${code}`;
         await apiClient.get(endpoint);
         setStatus("success");
-        toast(`${provider === 'meta' ? 'Meta' : 'Google'} integration successful!`, "success");
+        const providerName = provider === 'meta' ? 'Meta' : provider === 'linkedin' ? 'LinkedIn' : 'Google';
+        toast(`${providerName} integration successful!`, "success");
         setTimeout(() => {
           if (window.opener) {
+            window.opener.postMessage({ type: 'OAUTH_SUCCESS', provider }, '*');
             window.close();
           } else {
             router.push("/integrations");

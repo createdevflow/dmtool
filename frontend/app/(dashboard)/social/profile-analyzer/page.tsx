@@ -49,8 +49,28 @@ const mockActiveTimes = [
 ];
 
 const platformIcons: Record<string, any> = {
-  Instagram, Twitter, LinkedIn: Linkedin, Facebook,
+  Instagram, Twitter, LinkedIn: Linkedin, linkedin: Linkedin, Facebook,
   "Twitter/X": Twitter,
+};
+
+const formatNumber = (num: number | string | undefined | null) => {
+  if (num == null) return '—';
+  const n = typeof num === 'string' ? parseInt(num, 10) : num;
+  if (isNaN(n)) return num;
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return n.toLocaleString();
+};
+
+const formatDate = (dateStr: string | undefined | null) => {
+  if (!dateStr) return '—';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch (e) {
+    return dateStr;
+  }
 };
 
 const normalizePlatform = (platform: string) => platform.trim().toLowerCase();
@@ -77,6 +97,26 @@ const dedupeLatestMetrics = (items: any[]) => {
   }
 
   return deduped;
+};
+
+const getNumberAtPath = (source: any, path: string) => {
+  if (!source) return 0;
+  const raw = path.split('.').reduce((acc: any, key) => acc?.[key], source);
+  if (raw == null || raw === '') return undefined;
+
+  const normalized = typeof raw === 'string' ? raw.replace(/,/g, '') : raw;
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : undefined;
+};
+
+const firstAvailableNumber = (sources: any[], paths: string[]) => {
+  for (const source of sources) {
+    for (const path of paths) {
+      const value = getNumberAtPath(source, path);
+      if (value !== undefined) return value;
+    }
+  }
+  return 0;
 };
 
 export default function ProfileAnalyzerPage() {
@@ -156,7 +196,17 @@ export default function ProfileAnalyzerPage() {
         const history = Array.isArray(rawHistory) ? rawHistory : [];
 
         const hasMetaSocial = !!(selected?.ig_handle || selected?.fb_handle || selected?.facebook_handle);
-        const needsLiveRefresh = hasMetaSocial && (metrics.length === 0 || metrics.every((item: any) => item.is_simulated));
+        const needsLiveRefresh = hasMetaSocial && (
+          metrics.length === 0 ||
+          metrics.every((item: any) => item.is_simulated) ||
+          metrics.some((item: any) => {
+            const reach = Number(item?.reach ?? 0);
+            const engagementCount = Number(item?.engagement ?? item?.engagement_count ?? item?.engagementCount ?? 0);
+            const profileVisits = Number(item?.profile_visits ?? item?.profileVisits ?? 0);
+            const linkTaps = Number(item?.external_link_taps ?? item?.externalLinkTaps ?? 0);
+            return reach === 0 && engagementCount === 0 && profileVisits === 0 && linkTaps === 0;
+          })
+        );
 
         if (needsLiveRefresh) {
           await syncLiveSocialInsights(selected.id);
@@ -213,10 +263,38 @@ export default function ProfileAnalyzerPage() {
   }
 
   const activeSocial = socialMetrics.find(s => normalizePlatform(s.platform) === normalizePlatform(activePlatform)) ?? null;
-  const totalReach = activeSocial?.reach ?? 0;
-  const totalEngagement = activeSocial?.engagement_count ?? activeSocial?.engagementCount ?? 0;
-  const totalFollowers = activeSocial?.followers ?? 0;
-  const engagementRate = activeSocial?.engagement ?? 0;
+  const data = {
+    account: {
+      followers_count: activeSocial?.followers ?? publicProfile?.followers ?? 0,
+      follows_count: activeSocial?.following_count ?? activeSocial?.followingCount ?? publicProfile?.following ?? 0,
+      media_count: activeSocial?.posts_count ?? activeSocial?.postsCount ?? publicProfile?.post_count ?? 0,
+      display_name: activeSocial?.display_name ?? publicProfile?.full_name ?? activeSocial?.username ?? '',
+      biography: activeSocial?.biography ?? publicProfile?.bio ?? '',
+      website: activeSocial?.website ?? '',
+      profile_picture_url: activeSocial?.profile_picture_url ?? publicProfile?.profile_pic_url ?? '',
+      username: activeSocial?.username ?? publicProfile?.username ?? '',
+    },
+    insights: {
+      daily: {
+        reach: activeSocial?.insights?.daily?.reach ?? activeSocial?.reach ?? 0,
+        profile_views: activeSocial?.profile_metrics?.profile_visits ?? activeSocial?.profile_visits ?? activeSocial?.profileVisits ?? activeSocial?.insights?.daily?.profile_views ?? 0,
+        link_taps: activeSocial?.profile_metrics?.external_link_taps ?? activeSocial?.external_link_taps ?? activeSocial?.externalLinkTaps ?? activeSocial?.insights?.daily?.link_taps ?? 0,
+      },
+      weekly_reach: activeSocial?.insights?.weekly_reach ?? activeSocial?.weekly_reach ?? activeSocial?.weeklyReach ?? 0,
+      monthly_reach: activeSocial?.insights?.monthly_reach ?? activeSocial?.monthly_reach ?? activeSocial?.monthlyReach ?? 0,
+    },
+    profile_metrics: {
+      profile_visits: activeSocial?.profile_metrics?.profile_visits ?? activeSocial?.profile_visits ?? activeSocial?.profileVisits ?? activeSocial?.insights?.daily?.profile_views ?? 0,
+      external_link_taps: activeSocial?.profile_metrics?.external_link_taps ?? activeSocial?.external_link_taps ?? activeSocial?.externalLinkTaps ?? activeSocial?.insights?.daily?.link_taps ?? 0,
+      engagement_count: activeSocial?.profile_metrics?.engagement_count ?? activeSocial?.engagement_count ?? activeSocial?.engagementCount ?? activeSocial?.engagement ?? 0,
+      engagement_rate: activeSocial?.profile_metrics?.engagement_rate ?? activeSocial?.engagement_rate ?? activeSocial?.engagement ?? 0,
+    },
+  };
+
+  const totalReach = data?.insights?.daily?.reach ?? 0;
+  const totalEngagement = data?.profile_metrics?.engagement_count ?? 0;
+  const totalFollowers = data?.account?.followers_count ?? 0;
+  const engagementRate = data?.profile_metrics?.engagement_rate ?? 0;
 
   // Derive per-platform handle from project
   const handleForPlatform = (platform: string) => {
@@ -351,7 +429,7 @@ export default function ProfileAnalyzerPage() {
                 <div className="w-24 h-24 rounded-3xl bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shadow-inner">
                   {activeSocial?.profile_picture_url ? (
                        <Avatar className="h-24 w-24 rounded-3xl">
-                         <AvatarImage src={activeSocial.profile_picture_url} alt={handleForPlatform(activePlatform)} className="object-cover" />
+                         <AvatarImage src={data.account.profile_picture_url} alt={handleForPlatform(activePlatform)} className="object-cover" />
                          <AvatarFallback className="rounded-3xl bg-slate-100">
                            <Users className="w-10 h-10 text-slate-200" />
                          </AvatarFallback>
@@ -365,10 +443,10 @@ export default function ProfileAnalyzerPage() {
                   </div>
                </div>
                <h3 className="text-xl font-bold text-slate-900">
-                 {activeSocial?.display_name ? activeSocial.display_name : `@${handleForPlatform(activePlatform)}`}
+                 {data.account.display_name ? data.account.display_name : `@${handleForPlatform(activePlatform)}`}
                </h3>
-               {activeSocial?.username && (
-                 <p className="text-sm text-slate-500 mt-1">@{activeSocial.username}</p>
+               {data.account.username && (
+                 <p className="text-sm text-slate-500 mt-1">@{data.account.username}</p>
                )}
                <div className="text-sm text-slate-500 font-medium mt-1 flex items-center justify-center gap-2">
                  {activePlatform}
@@ -384,46 +462,46 @@ export default function ProfileAnalyzerPage() {
                     <div className="grid grid-cols-2 gap-3 text-center">
                      <div className="rounded-xl bg-white border border-slate-100 p-3">
                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Followers</p>
-                       <p className="text-base font-bold text-slate-900 mt-1">{activeSocial.followers?.toLocaleString?.() ?? "—"}</p>
+                       <p className="text-base font-bold text-slate-900 mt-1">{data.account.followers_count.toLocaleString()}</p>
                      </div>
                      <div className="rounded-xl bg-white border border-slate-100 p-3">
                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Following</p>
-                       <p className="text-base font-bold text-slate-900 mt-1">{activeSocial.following_count?.toLocaleString?.() ?? activeSocial.followingCount?.toLocaleString?.() ?? "—"}</p>
+                       <p className="text-base font-bold text-slate-900 mt-1">{data.account.follows_count.toLocaleString()}</p>
                      </div>
                      <div className="rounded-xl bg-white border border-slate-100 p-3">
                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Posts</p>
-                       <p className="text-base font-bold text-slate-900 mt-1">{activeSocial.posts_count?.toLocaleString?.() ?? activeSocial.postsCount?.toLocaleString?.() ?? "—"}</p>
+                       <p className="text-base font-bold text-slate-900 mt-1">{data.account.media_count.toLocaleString()}</p>
                      </div>
                      <div className="rounded-xl bg-white border border-slate-100 p-3">
                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Weekly Reach</p>
-                       <p className="text-base font-bold text-slate-900 mt-1">{activeSocial.weekly_reach?.toLocaleString?.() ?? activeSocial.weeklyReach?.toLocaleString?.() ?? "—"}</p>
+                       <p className="text-base font-bold text-slate-900 mt-1">{data.insights.weekly_reach.toLocaleString()}</p>
                      </div>
                    </div>
 
-                   {activeSocial.display_name && (
+                   {data.account.display_name && (
                      <div>
                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{activePlatform.toLowerCase().includes("facebook") ? "Page Name" : "Display Name"}</p>
-                       <p className="text-sm font-semibold text-slate-900">{activeSocial.display_name}</p>
+                       <p className="text-sm font-semibold text-slate-900">{data.account.display_name}</p>
                      </div>
                    )}
 
-                   {activeSocial.biography && (
+                   {data.account.biography && (
                      <div>
                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Bio</p>
-                       <p className="text-xs leading-5 text-slate-600 whitespace-pre-line">{activeSocial.biography}</p>
+                       <p className="text-xs leading-5 text-slate-600 whitespace-pre-line">{data.account.biography}</p>
                      </div>
                    )}
 
-                   {activeSocial.website && (
+                   {data.account.website && (
                      <div>
                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{activePlatform.toLowerCase().includes("facebook") ? "Page Link" : "Website"}</p>
                        <a
-                         href={activeSocial.website}
+                         href={data.account.website}
                          target="_blank"
                          rel="noreferrer"
                          className="text-xs font-semibold text-slate-900 underline underline-offset-4 break-all"
                        >
-                         {activeSocial.website}
+                         {data.account.website}
                        </a>
                      </div>
                    )}
@@ -519,10 +597,10 @@ export default function ProfileAnalyzerPage() {
                     const parsed = JSON.parse(activeSocial.audience_insights);
                     // countries
                     if (parsed.countries && typeof parsed.countries === 'object') {
-                      topCountries = Object.entries(parsed.countries).sort((a: any, b: any) => b[1] - a[1]).slice(0, 6);
+                      topCountries = Object.entries(parsed.countries as Record<string, number>).sort((a, b) => b[1] - a[1]).slice(0, 6);
                     }
                     if (parsed.cities && typeof parsed.cities === 'object') {
-                      topCities = Object.entries(parsed.cities).sort((a: any, b: any) => b[1] - a[1]).slice(0, 6);
+                      topCities = Object.entries(parsed.cities as Record<string, number>).sort((a, b) => b[1] - a[1]).slice(0, 6);
                     }
                     // age_gender -> expected shape: { "18-24": { male: X, female: Y }, ... }
                     if (parsed.age_gender && typeof parsed.age_gender === 'object') {
@@ -558,134 +636,18 @@ export default function ProfileAnalyzerPage() {
                 
                 return (
                   <>
-                    {/* Insight Summary Banner */}
-                    <div className="w-full bg-slate-900 rounded-2xl p-6 text-white flex flex-col sm:flex-row gap-6 items-center justify-between shadow-xl shadow-slate-900/10">
-                       <div className="flex items-center gap-4">
-                         <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center">
-                           <Activity className="w-6 h-6 text-sky-400" />
-                         </div>
 
-                          {/* AI / Performance Insights (heuristic summaries) */}
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
-                            {(() => {
-                              const insights: { title: string; text: string }[] = [];
-                              // growth
-                              const status = activeSocial?.status ?? 'stable';
-                              insights.push({ title: 'Growth', text: status === 'growing' ? 'Your profile is growing steadily.' : status === 'dropping' ? 'Profile growth has slowed recently.' : 'Your profile is growing steadily.' });
-                              // content type
-                              try {
-                                const reels = dynamicContentSplit.find((c: any) => c.type.toLowerCase().includes('reel'))?.percentage ?? dynamicContentSplit.find((c: any) => c.type.toLowerCase().includes('reels'))?.percentage ?? 0;
-                                const topType = dynamicContentSplit.reduce((acc: any, cur: any) => (cur.percentage > (acc.percentage ?? 0) ? cur : acc), {} as any);
-                                if (topType && topType.type) {
-                                  insights.push({ title: 'Top Content', text: `${topType.type} are generating the highest performance.` });
-                                } else {
-                                  insights.push({ title: 'Top Content', text: 'Content performance is mixed.' });
-                                }
-                              } catch (e) {
-                                insights.push({ title: 'Top Content', text: 'Content performance is mixed.' });
-                              }
-
-                              // best day
-                              try {
-                                const best = [...dynamicActiveTimes].sort((a: any, b: any) => (b.active ?? 0) - (a.active ?? 0))[0];
-                                if (best) insights.push({ title: 'Best Day', text: `${best.day} has the highest follower activity.` });
-                                else insights.push({ title: 'Best Day', text: `Follower activity data is limited.` });
-                              } catch (e) {
-                                insights.push({ title: 'Best Day', text: `Follower activity data is limited.` });
-                              }
-
-                              // top country
-                              if (topCountries && topCountries.length > 0) {
-                                insights.push({ title: 'Top Country', text: `Most audience comes from ${topCountries[0][0]}.` });
-                              }
-
-                              // ensure exactly 3 cards show
-                              return insights.slice(0, 3).map((ins, i) => (
-                                <Card key={i} className="p-4 rounded-xl border-slate-100 shadow-sm">
-                                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">{ins.title}</p>
-                                  <p className="text-sm font-semibold text-slate-900">{ins.text}</p>
-                                </Card>
-                              ));
-                            })()}
-                          </div>
-                         <div>
-                           <p className="text-sm font-semibold text-slate-300">Profile Highlight</p>
-                           <p className="text-lg font-bold">Your Reels are driving 98% of new reach.</p>
-                         </div>
-                       </div>
-                       <Button className="bg-white hover:bg-slate-100 text-slate-900 font-bold rounded-xl whitespace-nowrap">
-                         View Top Post
-                       </Button>
-                    </div>
-
-                    {/* Audience Insights: Age/Gender + Top Locations */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                      <Card className="lg:col-span-2 border-slate-100 shadow-none rounded-2xl p-6">
-                        <p className="text-sm font-bold text-slate-900 mb-4">Age & Gender Breakdown</p>
-                        {ageGenderData.length > 0 ? (
-                          <div className="h-[200px] w-full">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={ageGenderData} margin={{ top: 10, right: 20, left: 0, bottom: 5 }}>
-                                <XAxis dataKey="age" axisLine={false} tickLine={false} />
-                                <YAxis />
-                                <RechartsTooltip />
-                                <Legend />
-                                <Bar dataKey="male" fill="#3b82f6" name="Male" />
-                                <Bar dataKey="female" fill="#ec4899" name="Female" />
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-slate-500">Age & gender data not available for this profile.</p>
-                        )}
-                      </Card>
-
-                      <Card className="border-slate-100 shadow-none rounded-2xl p-6">
-                        <p className="text-sm font-bold text-slate-900 mb-4">Top Countries</p>
-                        {topCountries.length > 0 ? (
-                          <div className="space-y-3">
-                            {topCountries.map((c, i) => (
-                              <div key={i} className="flex items-center justify-between">
-                                <div className="text-sm font-semibold text-slate-700">{c[0]}</div>
-                                <div className="text-sm font-bold text-slate-900">{c[1].toLocaleString()}</div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-slate-500">No country breakdown available.</p>
-                        )}
-
-                        <div className="mt-6">
-                          <p className="text-sm font-bold text-slate-900 mb-2">Top Cities</p>
-                          {topCities.length > 0 ? (
-                            <div className="space-y-2">
-                              {topCities.map((c, i) => (
-                                <div key={i} className="flex items-center justify-between">
-                                  <div className="text-sm text-slate-700">{c[0]}</div>
-                                  <div className="text-sm font-bold text-slate-900">{c[1].toLocaleString()}</div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-slate-500">No city data available.</p>
-                          )}
-                        </div>
-                      </Card>
-                    </div>
 
                     {/* Account Overview Grid */}
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                       {[
-                        { label: "Total Followers", value: (activeSocial.followers ?? activeSocial.followers_count ?? 0).toLocaleString(), diff: followersDelta.diff },
-                        { label: "Following", value: (activeSocial.following_count ?? activeSocial.followingCount ?? 0).toLocaleString(), diff: 0 },
-                        { label: "Total Posts/Reels", value: (activeSocial.posts_count ?? activeSocial.postsCount ?? 0).toLocaleString(), diff: 0 },
-                        { label: "Daily Reach", value: (activeSocial.profile_visits ? (activeSocial.reach ?? 0).toLocaleString() : (activeSocial.reach ?? 0).toLocaleString()), diff: reachDelta.diff },
-                        { label: "Weekly Reach", value: (activeSocial.weekly_reach ?? activeSocial.weeklyReach ?? 0).toLocaleString(), diff: 0 },
-                        { label: "Monthly Reach", value: (activeSocial.monthly_reach ?? activeSocial.monthlyReach ?? 0).toLocaleString(), diff: 0 },
-                        { label: "Profile Visits", value: (activeSocial.profile_visits ?? activeSocial.profileVisits ?? "—").toLocaleString?.() ?? (activeSocial.profile_visits ?? activeSocial.profileVisits ?? "—") , diff: 0 },
-                        { label: "Link Taps", value: (activeSocial.external_link_taps ?? activeSocial.externalLinkTaps ?? 0).toLocaleString(), diff: 0 },
-                        { label: "Engagement", value: (activeSocial.engagement_count ?? activeSocial.engagementCount ?? 0).toLocaleString(), diff: 0 },
-                        { label: "Engagement Rate", value: (activeSocial.engagement ?? activeSocial.engagement_rate ?? engagementRate).toLocaleString ? `${(activeSocial.engagement ?? activeSocial.engagement_rate ?? engagementRate).toFixed(1)}%` : `${(activeSocial.engagement ?? activeSocial.engagement_rate ?? engagementRate)}%`, diff: 0 }
+                        { label: "Daily Reach", value: formatNumber(data?.insights?.daily?.reach), diff: reachDelta.diff },
+                        { label: "Weekly Reach", value: formatNumber(data?.insights?.weekly_reach), diff: 0 },
+                        { label: "Monthly Reach", value: formatNumber(data?.insights?.monthly_reach), diff: 0 },
+                        { label: "Profile Visits", value: formatNumber(data?.profile_metrics?.profile_visits), diff: 0 },
+                        { label: "Link Taps", value: formatNumber(data?.profile_metrics?.external_link_taps), diff: 0 },
+                        { label: "Engagement", value: formatNumber(data?.profile_metrics?.engagement_count), diff: 0 },
+                        { label: "Engagement Rate", value: `${(data?.profile_metrics?.engagement_rate ?? 0).toFixed(1)}%`, diff: 0 }
                       ].map((stat, i) => (
                         <Card key={i} className="border-slate-100 shadow-none rounded-2xl p-5 hover:border-slate-200 transition-colors">
                           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">{stat.label}</p>
@@ -770,8 +732,8 @@ export default function ProfileAnalyzerPage() {
                               </div>
                             </div>
                             <div>
-                              <p className="text-sm font-bold text-slate-900">{post.views} <span className="text-xs text-slate-400 font-medium">Views</span></p>
-                              <p className="text-[10px] text-slate-500 font-semibold">{post.interactions} Interactions • {post.date}</p>
+                              <p className="text-sm font-bold text-slate-900">{post.views != null && post.views !== "-" ? formatNumber(post.views) : '—'} <span className="text-xs text-slate-400 font-medium">Views</span></p>
+                              <p className="text-[10px] text-slate-500 font-semibold">{formatNumber(post.likes ?? 0)} Likes • {formatNumber(post.comments ?? 0)} Comments</p>
                             </div>
                           </div>
                         ))}
@@ -799,14 +761,14 @@ export default function ProfileAnalyzerPage() {
                             <div className="p-2 rounded-lg bg-sky-50 text-sky-600"><Users className="w-4 h-4" /></div>
                             <span className="text-sm font-semibold text-slate-600">Profile Visits</span>
                           </div>
-                          <span className="text-lg font-bold text-slate-900">{(activeSocial.profile_visits ?? activeSocial.profileVisits ?? 0).toLocaleString()}</span>
+                          <span className="text-lg font-bold text-slate-900">{formatNumber(data?.profile_metrics?.profile_visits)}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600"><ArrowUpRight className="w-4 h-4" /></div>
                             <span className="text-sm font-semibold text-slate-600">External Link Taps</span>
                           </div>
-                          <span className="text-lg font-bold text-slate-900">{(activeSocial.external_link_taps ?? activeSocial.externalLinkTaps ?? 0).toLocaleString()}</span>
+                          <span className="text-lg font-bold text-slate-900">{formatNumber(data?.profile_metrics?.external_link_taps)}</span>
                         </div>
                       </Card>
                     </div>

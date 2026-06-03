@@ -24,6 +24,7 @@ export default function CreateProjectPage() {
   const [url, setUrl] = useState("");
   const [goal, setGoal] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [authWaiting, setAuthWaiting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [activeSocials, setActiveSocials] = useState<string[]>([]);
   const [handles, setHandles] = useState({
@@ -35,7 +36,7 @@ export default function CreateProjectPage() {
 
   const toggleSocial = (platform: string) => {
     setActiveSocials(prev => 
-      prev.includes(platform) ? prev.filter(p => p !== platform) : [...prev, platform]
+      prev.includes(platform) ? [] : [platform]
     );
   };
 
@@ -44,27 +45,9 @@ export default function CreateProjectPage() {
     setStep("details");
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-
-    // Ensure URL has protocol
-    let formattedUrl = url;
-    if (formattedUrl && !formattedUrl.startsWith("http")) {
-      formattedUrl = `https://${formattedUrl}`;
-    }
-
-    // Synchronously open popup to bypass popup blockers
-    const needsSocialLogin = (goal === 'social' || goal === 'both');
-    let loginWindow: Window | null = null;
-    if (needsSocialLogin) {
-      loginWindow = window.open('', 'MetaLogin', 'width=600,height=700,left=200,top=100');
-      if (loginWindow) {
-        loginWindow.document.write('<div style="font-family:sans-serif;padding:20px;text-align:center;">Connecting to Meta...</div>');
-      }
-    }
-
+  const executeProjectCreation = async (formattedUrl: string) => {
     try {
+      setLoading(true);
       await dashboardApi.onboard({
         name: name,
         goal: goal || "seo",
@@ -75,21 +58,82 @@ export default function CreateProjectPage() {
         linkedin_handle: handles.linkedin
       });
       window.dispatchEvent(new Event("dmtool_projects_updated"));
-      
-      if (needsSocialLogin && loginWindow) {
-        const res = await dashboardApi.getMetaAuthUrl();
-        if (res?.data?.data?.url) {
-          loginWindow.location.href = res.data.data.url;
-        } else {
-          loginWindow.close();
-        }
-      }
-
       setSuccess(true);
       setTimeout(() => router.push("/dashboard"), 1500);
     } catch (err) {
       console.error("Failed to create project", err);
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    let formattedUrl = url;
+    if (formattedUrl && !formattedUrl.startsWith("http")) {
+      formattedUrl = `https://${formattedUrl}`;
+    }
+
+    const needsSocialLogin = (goal === 'social' || goal === 'both') && (activeSocials.includes('facebook') || activeSocials.includes('instagram') || activeSocials.includes('linkedin'));
+    
+    if (!needsSocialLogin) {
+      executeProjectCreation(formattedUrl);
+      return;
+    }
+
+    // Handle OAuth Flow
+    let loginWindow = window.open('', 'SocialLogin', 'width=600,height=700,left=200,top=100');
+    if (loginWindow) {
+      loginWindow.document.write('<div style="font-family:sans-serif;padding:20px;text-align:center;">Connecting to Social Provider...</div>');
+    }
+
+    setAuthWaiting(true);
+
+    try {
+      let authUrl = null;
+      if (activeSocials.includes("linkedin")) {
+         const res = await dashboardApi.getLinkedinAuthUrl();
+         authUrl = res?.data?.data?.url;
+      } else {
+         const res = await dashboardApi.getMetaAuthUrl();
+         authUrl = res?.data?.data?.url;
+      }
+
+      if (authUrl && loginWindow) {
+        loginWindow.location.href = authUrl;
+        
+        // Listen for success message
+        const messageHandler = (event: MessageEvent) => {
+          if (event.data?.type === 'OAUTH_SUCCESS') {
+            window.removeEventListener('message', messageHandler);
+            clearInterval(checkWindowTimer);
+            setAuthWaiting(false);
+            executeProjectCreation(formattedUrl);
+          }
+        };
+        window.addEventListener('message', messageHandler);
+
+        // Check if user manually closed popup
+        const checkWindowTimer = setInterval(() => {
+          if (loginWindow?.closed) {
+            clearInterval(checkWindowTimer);
+            window.removeEventListener('message', messageHandler);
+            if (authWaiting) { // If it was still waiting
+               setAuthWaiting(false);
+               setLoading(false);
+            }
+          }
+        }, 500);
+      } else if (loginWindow) {
+        loginWindow.close();
+        setAuthWaiting(false);
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error("Failed to get auth URL", err);
       if (loginWindow) loginWindow.close();
+      setAuthWaiting(false);
       setLoading(false);
     }
   };
@@ -223,28 +267,65 @@ export default function CreateProjectPage() {
                          ))}
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                         {activeSocials.filter(p => p !== 'facebook').map((platform) => (
-                            <div key={platform} className="relative">
-                               <span className="absolute left-3 top-2.5 text-slate-400 text-xs font-bold">@</span>
-                               <Input 
-                                 placeholder={`${platform} username`}
-                                 className="h-10 rounded-xl bg-slate-50 border-transparent focus:bg-white focus:border-slate-200 pl-7 text-sm font-semibold"
-                                 value={(handles as any)[platform]}
-                                 onChange={(e) => setHandles({...handles, [platform]: e.target.value})}
-                               />
+                      {activeSocials.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {activeSocials.includes("instagram") && (
+                            <div className="space-y-2">
+                              <Label>Instagram Handle</Label>
+                              <Input
+                                value={handles.instagram}
+                                onChange={(e) => setHandles({...handles, instagram: e.target.value})}
+                                placeholder="username"
+                                className="rounded-xl border-slate-200 dark:border-slate-800"
+                              />
                             </div>
-                         ))}
-                      </div>
+                          )}
+                          {activeSocials.includes("twitter") && (
+                            <div className="space-y-2">
+                              <Label>Twitter / X Handle</Label>
+                              <Input
+                                value={handles.twitter}
+                                onChange={(e) => setHandles({...handles, twitter: e.target.value})}
+                                placeholder="username"
+                                className="rounded-xl border-slate-200 dark:border-slate-800"
+                              />
+                            </div>
+                          )}
+                          {activeSocials.includes("linkedin") && (
+                            <div className="space-y-2">
+                              <Label>LinkedIn Page URL</Label>
+                              <Input
+                                value={handles.linkedin}
+                                onChange={(e) => setHandles({...handles, linkedin: e.target.value})}
+                                placeholder="linkedin.com/company/..."
+                                className="rounded-xl border-slate-200 dark:border-slate-800"
+                              />
+                            </div>
+                          )}
+                          {activeSocials.includes("facebook") && (
+                            <div className="space-y-2">
+                              <Label>Facebook Page URL</Label>
+                              <Input
+                                value={handles.facebook}
+                                onChange={(e) => setHandles({...handles, facebook: e.target.value})}
+                                placeholder="facebook.com/page"
+                                className="rounded-xl border-slate-200 dark:border-slate-800"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
                   <Button 
                     type="submit" 
                     className="w-full bg-slate-900 hover:bg-slate-800 text-white rounded-2xl h-14 font-bold text-lg transition-all disabled:opacity-70 shadow-xl shadow-slate-900/10"
-                    disabled={loading || success}
+                    disabled={loading || success || authWaiting}
                   >
-                    {loading ? (
+                    {authWaiting ? (
+                      <span className="flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Waiting for Authorization...</span>
+                    ) : loading ? (
                       <Loader2 className="w-5 h-5 animate-spin" />
                     ) : success ? (
                       <span className="flex items-center gap-2"><CheckCircle2 className="w-5 h-5" /> Project Active!</span>

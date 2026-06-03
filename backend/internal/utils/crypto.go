@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // GenerateOpaqueToken creates a cryptographically secure random 32-byte hex string.
@@ -54,6 +55,10 @@ func Encrypt(plaintext string, key []byte) (string, error) {
 
 // Decrypt string with AES-GCM.
 func Decrypt(ciphertextHex string, key []byte) (string, error) {
+	ciphertextHex = strings.TrimSpace(ciphertextHex)
+	ciphertextHex = strings.ReplaceAll(ciphertextHex, "\n", "")
+	ciphertextHex = strings.ReplaceAll(ciphertextHex, "\r", "")
+	ciphertextHex = strings.ReplaceAll(ciphertextHex, " ", "")
 	ciphertext, err := hex.DecodeString(ciphertextHex)
 	if err != nil {
 		return "", err

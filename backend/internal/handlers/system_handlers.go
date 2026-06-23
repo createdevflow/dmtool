@@ -162,6 +162,7 @@ func (h *SystemHandler) GetCalendar(c *gin.Context) {
 				"music":         t.Music,
 				"tags":          t.Tags,
 				"publish_status": t.PublishStatus,
+				"publish_error":  t.PublishError,
 				"due_date":      t.DueDate.Format(time.RFC3339),
 				"done":          t.Completed,
 			})
@@ -403,6 +404,10 @@ func (h *SystemHandler) UpdateCalendarEvent(c *gin.Context) {
 		if err == nil {
 			utcParsed := parsed.UTC()
 			task.DueDate = &utcParsed
+			// Reset publish status to scheduled when due date is updated
+			// so the CalendarPublisher worker picks it up again
+			task.PublishStatus = "scheduled"
+			task.PublishError = ""
 		}
 	}
 

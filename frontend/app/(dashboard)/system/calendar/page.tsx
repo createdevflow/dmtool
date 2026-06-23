@@ -163,6 +163,7 @@ export default function CalendarPage() {
               tags: t.tags || "",
               dueDate: t.due_date,
               publishStatus: t.publish_status || "scheduled",
+              publishError: t.publish_error || "",
               done: t.completed || t.done || t.publish_status === "published" || false,
               time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
             };
@@ -271,7 +272,14 @@ export default function CalendarPage() {
   };
 
   const saveScheduledContent = async () => {
-    if (!project || !selectedDate) return;
+    if (!project) {
+      toast("No project selected", "error");
+      return;
+    }
+    if (!selectedDate) {
+      toast("No date selected", "error");
+      return;
+    }
 
     const validDrafts = drafts.filter(draft => draft.contentType === "story" || draft.caption.trim() || draft.file || draft.assetUrl);
     if (validDrafts.length === 0) {
@@ -310,7 +318,7 @@ export default function CalendarPage() {
         dueDate.setHours(Number.isFinite(hours) ? hours : 10, Number.isFinite(minutes) ? minutes : 0, 0, 0);
 
         if (dueDate.getTime() <= new Date().getTime()) {
-          alert(`The scheduled time for "${draft.caption.substring(0, 20)}..." cannot be in the past. Please select a future time.`);
+          toast(`Scheduled time cannot be in the past. Pick a future time.`, "error");
           setSaving(false);
           return;
         }
@@ -343,8 +351,10 @@ export default function CalendarPage() {
       setEditingTask(null);
       setDrafts([{ title: "", platform: "instagram", contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "" }]);
       await fetchData();
-    } catch (err) {
-      alert("Failed to save scheduled content.");
+    } catch (err: any) {
+      console.error("saveScheduledContent error:", err);
+      const msg = err?.response?.data?.error?.message || err?.message || "Failed to save scheduled content.";
+      toast(msg, "error");
     } finally {
       setSaving(false);
     }
@@ -358,6 +368,27 @@ export default function CalendarPage() {
       setShowDayDetails(true);
     } catch (err) {
       alert("Failed to delete scheduled content.");
+    }
+  };
+
+  const retryTask = async (task: any) => {
+    try {
+      // Reset publish_status back to "scheduled" so the CalendarPublisher picks it up again
+      const formData = new FormData();
+      formData.append("project_id", String(task.projectId || project?.id));
+      formData.append("title", task.title);
+      formData.append("platform", task.platform);
+      formData.append("content_type", task.contentType);
+      formData.append("caption", task.caption || "");
+      formData.append("tags", task.tags || "");
+      // Schedule 2 minutes from now to give the worker time to pick it up
+      const retryDate = new Date(Date.now() + 2 * 60 * 1000);
+      formData.append("due_date", retryDate.toISOString());
+      await dashboardApi.updateCalendarEvent(task.id, formData);
+      toast("Post rescheduled — will retry in 2 minutes", "success");
+      await fetchData();
+    } catch (err) {
+      toast("Failed to retry post", "error");
     }
   };
 
@@ -603,8 +634,20 @@ export default function CalendarPage() {
           ) : (
             <div className="space-y-4">
               {taskListForSelectedDay.map((task) => {
-                let statusLabel = task.done ? 'Done' : 'Pending';
+                let statusLabel = task.done ? 'Published' : 'Scheduled';
                 let statusClass = task.done ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700';
+
+                // Map publish_status field to label and style
+                if (task.publishStatus === 'published') {
+                  statusLabel = 'Published';
+                  statusClass = 'bg-emerald-100 text-emerald-700';
+                } else if (task.publishStatus === 'failed') {
+                  statusLabel = 'Failed';
+                  statusClass = 'bg-rose-100 text-rose-700';
+                } else if (task.publishStatus === 'scheduled') {
+                  statusLabel = 'Scheduled';
+                  statusClass = 'bg-amber-100 text-amber-700';
+                }
                 
                 let countdownText = "";
                 if (!task.done && task.dueDate) {
@@ -650,10 +693,20 @@ export default function CalendarPage() {
                             <span>{task.time}</span>
                           </div>
                           {task.caption && <p className="mt-3 text-sm text-slate-600 line-clamp-2 leading-relaxed">{task.caption}</p>}
+                          {task.publishStatus === 'failed' && task.publishError && (
+                            <div className="mt-3 flex items-start gap-2 rounded-xl bg-rose-50 border border-rose-100 px-3 py-2">
+                              <span className="text-xs text-rose-700 font-medium leading-relaxed">{task.publishError}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="flex shrink-0 flex-col gap-1 transition-opacity">
-                        {!task.done && (
+                        {task.publishStatus === 'failed' && (
+                          <Button size="sm" variant="outline" className="h-8 text-xs font-semibold text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => retryTask(task)}>
+                            Retry
+                          </Button>
+                        )}
+                        {task.publishStatus !== 'published' && (
                           <Button size="icon" variant="ghost" className="h-8 w-8 text-slate-400 hover:text-brand-600 hover:bg-brand-50" onClick={() => openEditTask(task)}>
                             <Edit2 className="h-4 w-4" />
                           </Button>

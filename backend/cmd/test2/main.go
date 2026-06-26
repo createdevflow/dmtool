@@ -20,7 +20,8 @@ func main() {
 	metaService := services.NewMetaService()
 	encKey := utils.EncryptionKeyFromString(cfg.EncryptionKey)
 
+	linkedinService := services.NewLinkedinService()
 	fmt.Println("Running publisher manually...")
-	go workers.StartCalendarPublisher(taskRepo, projectRepo, oauthRepo, metaService, encKey, cfg)
+	go workers.StartCalendarPublisher(taskRepo, projectRepo, oauthRepo, metaService, linkedinService, encKey, cfg)
 	time.Sleep(5 * time.Second)
 }

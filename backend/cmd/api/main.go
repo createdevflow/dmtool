@@ -164,7 +164,7 @@ func main() {
 	registerContentRoutes(api, projectRepo, insightRepo, openaiService, cfg)
 	registerTaskRoutes(api, insightRepo)
 	registerSystemRoutes(api, projectRepo, taskRepo, cfg)
-	registerSyncRoutes(api, projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOService, rapidAPIService, crawlerService, encKey)
+	registerSyncRoutes(api, projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOService, rapidAPIService, crawlerService, gscService, metaService, encKey)
 	registerIntegrationRoutes(api, projectRepo, oauthRepo, gscOAuthConfig, metaOAuthConfig, linkedinOAuthConfig, encKey, cfg)
 
 	// ── 10. Start server ─────────────────────────────────────────────────────
@@ -364,9 +364,13 @@ func registerSyncRoutes(
 	dataForSEOSvc services.DataForSEOService,
 	rapidAPISvc services.RapidAPIService,
 	crawler services.SEOCrawlerService,
+	gscSvc services.GSCService,
+	metaSvc services.MetaService,
 	encKey []byte,
 ) {
-	h := handlers.NewSyncHandler(projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOSvc, rapidAPISvc, crawler, encKey)
+	h := handlers.NewSyncHandler(projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOSvc, rapidAPISvc, crawler, encKey).
+		WithGSCService(gscSvc).
+		WithMetaService(metaSvc)
 	g.POST("/projects/:id/sync", h.SyncProject)
 }
 

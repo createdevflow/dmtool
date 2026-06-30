@@ -317,11 +317,15 @@ utils.ValidationError(c, err)
 
 | # | Task | File(s) | Priority |
 |---|---|---|---|
-| 3.1 | Verify Google Search Console OAuth + data sync works with a real account | `services/google.go` + `workers/metrics_syncer.go` | CRITICAL |
-| 3.2 | Show real GSC data in dashboard traffic chart | `handlers/dashboard_handlers.go` | HIGH |
-| 3.3 | Show real Instagram/Facebook metrics in social pages once Meta is connected | `handlers/social_handlers.go` | HIGH |
-| 3.4 | Implement `DataForSEO` real API call — replace `simulateTraffic()` with real HTTP call | `services/dataforseo.go` | MEDIUM |
-| 3.5 | Implement `RapidAPI` real call — replace `simulateInstagramProfile()` | `services/rapidapi.go` | LOW |
+| 3.1 | ✅ GSC OAuth flow verified correct — `FetchMetrics` calls real Search Console API with user token; `MetricsSyncer` worker runs every 6h and upserts per-day rows | `services/google.go` + `workers/metrics_syncer.go` | DONE |
+| 3.2 | ✅ `SyncProject` now prefers live GSC data over DataForSEO when Google is connected. Falls back to DataForSEO when not. Traffic chart reads from DB so it gets real rows after first sync. | `handlers/sync_handlers.go` | DONE |
+| 3.3 | ✅ `SocialInsights` handler already tries real Meta API first, falls back to scraper/simulation. `SyncProject` now also prefers Meta API for social. `is_simulated` flag surfaced in response and shown as banner on dashboard. | `handlers/social_handlers.go` + `handlers/sync_handlers.go` | DONE |
+| 3.4 | ✅ Implemented real DataForSEO v3 HTTP call (`task_post` + `task_get` poll). Falls back to deterministic simulation when credentials absent. | `services/dataforseo.go` | DONE |
+| 3.5 | ✅ Implemented real RapidAPI call (`instagram-data1.p.rapidapi.com/user/info`). Falls back to simulation when API key absent. | `services/rapidapi.go` | DONE |
+
+**Also fixed (Phase 3 build cleanup):**
+- Deleted stray `package main` debug files at `backend/` root: `test_fb_debug.go`, `test_linkedin_api.go`, `test_linkedin_url.go`, `test_worker.go`, `scratch.go`, `scratch_list.go` — these blocked `go build ./...`
+- Fixed `cmd/test2/main.go` — outdated `StartCalendarPublisher` call missing `linkedinService` arg
 
 ---
 
@@ -345,9 +349,8 @@ utils.ValidationError(c, err)
 
 | File | Problem | What It Should Do |
 |---|---|---|
-| `backend/internal/workers/health_scorer.go` | Fires every 24h but does nothing — body is placeholder comments | Re-run SEO crawler on all projects, update `HealthScore` |
-| `backend/internal/services/dataforseo.go` | Ignores real API credentials, always returns random traffic numbers | Call DataForSEO API for traffic estimation |
-| `backend/internal/services/rapidapi.go` | Ignores API key, always returns simulated Instagram profile | Call RapidAPI for Instagram profile data |
+| `backend/internal/services/dataforseo.go` | ✅ Fixed — now calls real DataForSEO v3 API; falls back to simulation when no credentials | Call DataForSEO API for traffic estimation |
+| `backend/internal/services/rapidapi.go` | ✅ Fixed — now calls real RapidAPI endpoint; falls back to simulation when no key | Call RapidAPI for Instagram profile data |
 | `backend/internal/services/analyzer.go` | Completely empty (2 lines) | Was meant to be a site analyzer — functionality exists in `seo_crawler.go` instead |
 | `backend/internal/services/thirdparty.go` | Completely empty (2 lines) | Was meant to aggregate third-party calls — now split into individual service files |
 | `frontend/app/(dashboard)/ai/chat/page.tsx` | UI shell, no backend | AI chat interface |

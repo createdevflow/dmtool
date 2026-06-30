@@ -84,9 +84,6 @@ dmtool/
 │       ├── api-client.ts       ← Axios instance + all API call functions
 │       └── utils.ts            ← Shared utilities
 │
-├── crawler/                    ← Standalone Go crawler (NOT connected to backend yet)
-├── ai-engine/                  ← Python FastAPI stub (NOT used, backend uses OpenAI directly)
-├── nestjs-backend/             ← NestJS boilerplate (UNUSED, ignore completely)
 ├── docker-compose.yml          ← Runs backend + frontend + nginx
 ├── nginx.conf                  ← Reverse proxy config
 ├── STANDARD.md                 ← THIS FILE
@@ -97,13 +94,8 @@ dmtool/
 ### Deprecated / Empty Files (DO NOT EDIT)
 | File | Status |
 |---|---|
-| `backend/internal/services/analyzer.go` | Empty — 2 lines |
-| `backend/internal/services/thirdparty.go` | Empty — 2 lines |
 | `backend/internal/db/seeder.go` | Empty — deprecated |
 | `backend/internal/models/models.go` | Empty — models split into individual files |
-| `nestjs-backend/` | Entire folder unused |
-| `ai-engine/` | Just a requirements.txt, not integrated |
-| `crawler/` | Exists but not wired to backend |
 
 
 ---
@@ -334,13 +326,13 @@ utils.ValidationError(c, err)
 
 | # | Task | Notes |
 |---|---|---|
-| 4.1 | Delete or implement `services/analyzer.go` and `services/thirdparty.go` | Currently empty, misleading |
-| 4.2 | AI Chat (`app/(dashboard)/ai/chat/`) — decide: build backend or remove the page | No backend exists |
-| 4.3 | AI Visual Generator (`app/(dashboard)/ai/visual/`) — decide: integrate DALL-E or remove | No backend exists |
-| 4.4 | Competitor tracking — currently returns empty array always | `handlers/dashboard_handlers.go` Competitors() |
-| 4.5 | Alerts system — currently returns empty array always | `handlers/dashboard_handlers.go` Alerts() |
-| 4.6 | Twitter publishing — Twitter API costs $100/month minimum — decide if worth it | N/A |
-| 4.7 | Remove or explain `nestjs-backend/`, `ai-engine/`, `crawler/` folders | All unused |
+| 4.1 | ✅ Deleted `services/analyzer.go`, `services/thirdparty.go`, `services/auth.go`, `handlers/handlers.go` — all empty placeholders | DONE |
+| 4.2 | ✅ Deleted `nestjs-backend/`, `ai-engine/`, `crawler/` — all unused directories | DONE |
+| 4.3 | AI Chat (`app/(dashboard)/ai/chat/`) — decide: build backend or remove the page | No backend exists |
+| 4.4 | AI Visual Generator (`app/(dashboard)/ai/visual/`) — decide: integrate DALL-E or remove | No backend exists |
+| 4.5 | Competitor tracking — currently returns empty array always | `handlers/dashboard_handlers.go` Competitors() |
+| 4.6 | Alerts system — currently returns empty array always | `handlers/dashboard_handlers.go` Alerts() |
+| 4.7 | Twitter publishing — Twitter API costs $100/month minimum — decide if worth it | N/A |
 
 
 ---
@@ -351,8 +343,6 @@ utils.ValidationError(c, err)
 |---|---|---|
 | `backend/internal/services/dataforseo.go` | ✅ Fixed — now calls real DataForSEO v3 API; falls back to simulation when no credentials | Call DataForSEO API for traffic estimation |
 | `backend/internal/services/rapidapi.go` | ✅ Fixed — now calls real RapidAPI endpoint; falls back to simulation when no key | Call RapidAPI for Instagram profile data |
-| `backend/internal/services/analyzer.go` | Completely empty (2 lines) | Was meant to be a site analyzer — functionality exists in `seo_crawler.go` instead |
-| `backend/internal/services/thirdparty.go` | Completely empty (2 lines) | Was meant to aggregate third-party calls — now split into individual service files |
 | `frontend/app/(dashboard)/ai/chat/page.tsx` | UI shell, no backend | AI chat interface |
 | `frontend/app/(dashboard)/ai/visual/page.tsx` | UI only, no API calls | AI image/visual generation |
 

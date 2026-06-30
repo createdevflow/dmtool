@@ -8,6 +8,49 @@ const apiClient = axios.create({
     "Content-Type": "application/json",
   },
 });
+// ── SWR cache ────────────────────────────────────────────────────────────────
+// In-memory stale-while-revalidate cache for read-only dashboard endpoints.
+// TTL behavior:
+//   • <  CACHE_TTL_MS              → return cached value immediately
+//   • >= CACHE_TTL_MS, < 2x       → return cached value, refresh in background
+//   • >= 2x CACHE_TTL_MS          → wait on the network
+const CACHE_TTL_MS = 30_000;
+const swrCache = new Map<string, { ts: number; data: unknown }>();
+
+function cacheKey(url: string): string {
+  return url;
+}
+
+function swrFetch<T = any>(
+  url: string,
+  p: Promise<{ data: T }>
+): Promise<{ data: T }> {
+  const key = cacheKey(url);
+  const now = Date.now();
+  const entry = swrCache.get(key);
+  if (entry) {
+    const age = now - entry.ts;
+    if (age < CACHE_TTL_MS) {
+      // Fresh — serve from cache.
+      return Promise.resolve({ data: entry.data }) as Promise<{ data: T }>;
+    }
+    if (age < 2 * CACHE_TTL_MS) {
+      // Stale — serve cached value and refresh in background.
+      p.then((res) => {
+        swrCache.set(key, { ts: Date.now(), data: res.data });
+      }).catch(() => {
+        // Swallow background refresh errors; keep serving stale data.
+      });
+      return Promise.resolve({ data: entry.data }) as Promise<{ data: T }>;
+    }
+  }
+  // Cold or too-stale — wait on the network.
+  return p.then((res) => {
+    swrCache.set(key, { ts: Date.now(), data: res.data });
+    return res;
+  }) as unknown as Promise<{ data: T }>;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Request interceptor — attach JWT token to every request
 apiClient.interceptors.request.use(
@@ -58,8 +101,6 @@ export const projectsApi = {
   delete: (id: number) => apiClient.delete(`/projects/${id}`),
   onboard: (data: any) => apiClient.post("/onboard", data),
 };
-
-// ── Dashboard API ─────────────────────────────────────────────────────────────
 export const dashboardApi = {
   // Projects (used in dashboard)
   getProjects: () => apiClient.get("/projects"),
@@ -69,9 +110,9 @@ export const dashboardApi = {
 
   // Dashboard data
   getSnapshot: (projectId: number) =>
-    apiClient.get(`/dashboard/snapshot?project_id=${projectId}`),
+    swrFetch(`/dashboard/snapshot?project_id=${projectId}`, apiClient.get(`/dashboard/snapshot?project_id=${projectId}`)),
   getMetrics: (projectId: number, days = 30) =>
-    apiClient.get(`/dashboard/metrics?project_id=${projectId}&days=${days}`),
+    swrFetch(`/dashboard/metrics?project_id=${projectId}&days=${days}`, apiClient.get(`/dashboard/metrics?project_id=${projectId}&days=${days}`)),
   getInsights: (projectId: number) =>
     apiClient.get(`/dashboard/insights?project_id=${projectId}`),
   getTasks: (projectId: number) =>

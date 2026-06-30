@@ -5,6 +5,7 @@ package db
 import (
 	"log"
 	"strings"
+	"time"
 
 	"backend/internal/models"
 
@@ -38,10 +39,20 @@ func Init(databaseURL string, isDev bool) *gorm.DB {
 		}
 		db, err = gorm.Open(glebsqlite.Open(dsn), gormCfg)
 	}
-
 	if err != nil {
 		log.Fatalf("[db] failed to connect to database: %v", err)
 	}
+
+	// Configure connection pool. Bounds the in-flight DB load and lets
+	// pure-Go SQLite parallelize reads.
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("[db] failed to get sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 
 	// AutoMigrate all v2 models (dev only; prod uses SQL migration files)
 	if isDev {

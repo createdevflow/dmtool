@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"backend/internal/models"
@@ -61,8 +62,24 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 	t30 := now.AddDate(0, 0, -30).Format("2006-01-02")
 	t60 := now.AddDate(0, 0, -60).Format("2006-01-02")
 
-	metricsCurrent, _ := h.metricRepo.FindMetricsByProjectAndRange(pid, t30, t0)
-	metricsPrevious, _ := h.metricRepo.FindMetricsByProjectAndRange(pid, t60, t30)
+	// 2-5. Fetch metrics, SEO issues, keywords, and social metrics concurrently.
+	// FindByIDAndUser was already awaited above so that an unknown project
+// short-circuits before we fan out to 5 independent reads.
+	var (
+		metricsCurrent  []models.Metric
+		metricsPrevious []models.Metric
+		issues          []models.SEOIssue
+		keywords        []models.KeywordResult
+		socialMetrics   []models.SocialMetric
+	)
+	var wg sync.WaitGroup
+	wg.Add(5)
+	go func() { defer wg.Done(); metricsCurrent, _ = h.metricRepo.FindMetricsByProjectAndRange(pid, t30, t0) }()
+	go func() { defer wg.Done(); metricsPrevious, _ = h.metricRepo.FindMetricsByProjectAndRange(pid, t60, t30) }()
+	go func() { defer wg.Done(); issues, _ = h.seoRepo.FindOpenIssues(pid, "") }()
+	go func() { defer wg.Done(); keywords, _, _ = h.seoRepo.FindKeywords(pid, "") }()
+	go func() { defer wg.Done(); socialMetrics, _ = h.metricRepo.FindLatestSocialMetrics(pid) }()
+	wg.Wait()
 
 	// 3. Compute web traffic stats from real data
 	var currClicks, prevClicks, currImpressions, prevImpressions int64
@@ -89,12 +106,7 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 	}
 	ctrDelta := ctr - prevCTR
 
-	// 4. Fetch SEO issues for health context
-	issues, _ := h.seoRepo.FindOpenIssues(pid, "")
-	keywords, _, _ := h.seoRepo.FindKeywords(pid, "")
 	kwCount := len(keywords)
-
-	// 5. Website stats — all derived from real data
 	websiteStats := []gin.H{
 		{
 			"label":  "SEO Health",
@@ -137,8 +149,7 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		}
 	}
 
-	// 7. Social metrics from DB
-	socialMetrics, _ := h.metricRepo.FindLatestSocialMetrics(pid)
+	// 7. Social metrics from DB (already fetched above in parallel)
 	var latestFollowers, totalReach int64
 	var totalEngRate float64
 	isSimulated := false

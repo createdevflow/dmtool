@@ -18,6 +18,9 @@ services:
       timeout: 10s
       retries: 3
     restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+
 
   frontend:
     build: ./frontend
@@ -32,6 +35,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+    mem_limit: 512m
+    mem_reservation: 256m
+
   nginx:
     image: nginx:alpine
     container_name: dmtool-nginx
@@ -45,6 +51,8 @@ services:
       - frontend
       - backend
     restart: unless-stopped
+    mem_limit: 64m
+    mem_reservation: 32m
 
 volumes:
   backend_data:

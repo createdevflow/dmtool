@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/html"
@@ -372,9 +373,30 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 		})
 	}
 
-	// Check: Robots.txt
+	// Fetch robots.txt and sitemap.xml concurrently.
 	robotsURL := fmt.Sprintf("%s://%s/robots.txt", parsedURL.Scheme, parsedURL.Host)
-	if robotsResp, err := c.client.Get(robotsURL); err == nil {
+	sitemapURL := fmt.Sprintf("%s://%s/sitemap.xml", parsedURL.Scheme, parsedURL.Host)
+
+	var (
+		robotsResp *http.Response
+		smResp     *http.Response
+		robotsErr  error
+		smErr      error
+	)
+	var fetchWG sync.WaitGroup
+	fetchWG.Add(2)
+	go func() {
+		defer fetchWG.Done()
+		robotsResp, robotsErr = c.client.Get(robotsURL)
+	}()
+	go func() {
+		defer fetchWG.Done()
+		smResp, smErr = c.client.Get(sitemapURL)
+	}()
+	fetchWG.Wait()
+
+	// Check: Robots.txt
+	if robotsErr == nil && robotsResp != nil {
 		defer robotsResp.Body.Close()
 		if robotsResp.StatusCode == 200 {
 			result.Checks = append(result.Checks, AuditCheck{
@@ -394,8 +416,7 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 	}
 
 	// Check: Sitemap.xml
-	sitemapURL := fmt.Sprintf("%s://%s/sitemap.xml", parsedURL.Scheme, parsedURL.Host)
-	if smResp, err := c.client.Get(sitemapURL); err == nil {
+	if smErr == nil && smResp != nil {
 		defer smResp.Body.Close()
 		if smResp.StatusCode == 200 {
 			result.Checks = append(result.Checks, AuditCheck{

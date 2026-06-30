@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import dynamic from "next/dynamic";
 import { 
   Plus, Search, Sparkles, Send, BarChart3, TrendingUp,
   Activity, Zap, Target, MousePointer2, ChevronRight,
@@ -12,9 +12,28 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
-} from "recharts";
+
+const ResponsiveContainer = dynamic(
+  () => import("recharts").then((m) => m.ResponsiveContainer),
+  { ssr: false, loading: () => <div className="h-[360px] w-full animate-pulse bg-slate-100 rounded" /> }
+);
+const AreaChart = dynamic(
+  () => import("recharts").then((m) => m.AreaChart),
+  { ssr: false }
+);
+const Area = dynamic(
+  () => import("recharts").then((m) => m.Area),
+  { ssr: false }
+);
+const XAxis = dynamic(() => import("recharts").then((m) => m.XAxis), { ssr: false });
+const YAxis = dynamic(() => import("recharts").then((m) => m.YAxis), { ssr: false });
+const CartesianGrid = dynamic(() => import("recharts").then((m) => m.CartesianGrid), { ssr: false });
+const Tooltip = dynamic(() => import("recharts").then((m) => m.Tooltip), { ssr: false });
+
+const MotionDiv = dynamic(
+  () => import("framer-motion").then((m) => m.motion.div),
+  { ssr: false }
+);
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -164,7 +183,7 @@ export default function DashboardPage() {
       />
 
       {isSimulated && (
-        <motion.div 
+        <MotionDiv 
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: "auto" }}
           className="bg-amber-50 border border-amber-100 rounded-2xl p-4 flex items-center justify-between gap-4"
@@ -179,17 +198,17 @@ export default function DashboardPage() {
           </div>
           <Button 
             variant="outline" 
-            size="sm" 
+            size="sm"
             className="rounded-lg bg-white border-amber-200 text-amber-700 hover:bg-amber-50"
             onClick={() => router.push('/integrations')}
           >
             Connect API
           </Button>
-        </motion.div>
+        </MotionDiv>
       )}
 
       {/* 🔥 "Today’s Focus" Banner - Refined */}
-      <motion.div 
+      <MotionDiv 
         initial={{ opacity: 0, y: -4 }} 
         animate={{ opacity: 1, y: 0 }}
         className="bg-slate-900 rounded-2xl p-8 text-white shadow-xl shadow-slate-200 relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8"
@@ -218,7 +237,7 @@ export default function DashboardPage() {
             Execute Strategy
           </Button>
         </div>
-      </motion.div>
+      </MotionDiv>
 
       {/* 📊 2. PERFORMANCE SNAPSHOT */}
       <GrowthSnapshot 

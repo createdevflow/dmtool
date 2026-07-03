@@ -32,15 +32,12 @@ export default function RegisterPage() {
     try {
       const res = await authApi.register({ name, email, password });
       const { token, user } = res.data.data;
+      // Phase 3: single source of truth is the cookie (see lib/auth-cookie.ts).
+      // Mirror to localStorage is intentionally NOT done — see the
+      // comment in app/(auth)/login/page.tsx for the rationale.
       setToken(token);
       setUser(user);
-      // Phase 3: legacy localStorage keys kept as a fallback for code
-      // paths we have not yet migrated. New code reads from cookies.
-      localStorage.setItem("dmtool_token", token);
-      localStorage.setItem("dmtool_user", JSON.stringify(user));
       router.push("/onboarding");
-
-
     } catch (err: any) {
       const errorData = err.response?.data?.error;
       const errorMessage = typeof errorData === 'object' ? errorData.message : errorData;

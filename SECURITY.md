@@ -38,7 +38,30 @@ It does **not** and **cannot** cover credentials already in git history.
 - **Never** log a secret at info or above. Structured logger's secret-redaction is the only acceptable path.
 - **Always** rotate per-environment — never share keys between dev, staging, and production.
 
-## 3. JWT RS256 key pair
+## CSRF defense (frontend + backend)
+
+CSRF protection has two layers. Both must agree on which origins are
+trusted; both are configured from the same env var (`ALLOWED_ORIGINS`)
+on each side.
+
+1. **Backend — security boundary.** `internal/middleware/cors.go`
+   wraps every `/api/*` route. State-changing requests (POST / PUT /
+   PATCH / DELETE) with an `Origin` header not in `ALLOWED_ORIGINS`
+   are aborted with `403 Forbidden`. The browser-stripped Origin case
+   (server-to-server) is allowed. This is the actual security layer —
+   forged cross-origin POSTs from `evil.example` are blocked server-side.
+
+2. **Frontend — defense in depth.** `frontend/proxy.ts` (Next 16's
+   renamed middleware) applies the same check before any non-`/api/*`
+   route renders. Today that covers navigation paths; future form posts
+   routed through the proxy itself would also be covered. The proxy is
+   not on the security boundary for `/api/*` (the matcher excludes them
+   so the api-client can hit the backend directly).
+
+If `ALLOWED_ORIGINS` differs between frontend and backend, browsers
+will see CORS failures. The two sides must agree; update them
+together when adding/removing a host.
+
 
 Generate locally, never commit, never log:
 

@@ -13,8 +13,9 @@
 //
 // CSRF protection: state-changing requests (non-GET/HEAD) MUST come from
 // a trusted origin. The Origin header is mandatory per the Fetch spec for
-// POST/PUT/PATCH/DELETE; we compare it to a small allow-list. Browsers
-// that strip Origin are tolerated only for safe verbs.
+// POST/PUT/PATCH/DELETE; we compare it against an allow-list built from
+// the ALLOWED_ORIGINS env var (the same one the Go backend reads for its
+// CORS middleware in cmd/api/main.go). This keeps one source of truth.
 //
 // SECURITY: This proxy is a UX gate, not a security boundary. The real
 // check happens in the Go backend's JWTAuth middleware. A forged token
@@ -32,17 +33,34 @@ const DASHBOARD_MODES: Record<string, true> = {
   social: true,
   combined: true,
 };
-const TRUSTED_ORIGINS: Record<string, true> = {
-  "http://localhost:3000": true,
-  "http://127.0.0.1:3000": true,
-  "https://dmtool-eight.vercel.app": true,
-  "https://dmtool.com": true,
-};
 const SAFE_METHODS: Record<string, true> = {
   GET: true,
   HEAD: true,
   OPTIONS: true,
 };
+
+// buildTrustedOrigins reads the same env var the backend reads for its
+// CORS configuration (ALLOWED_ORIGINS, comma-separated). Localhost
+// origins are appended automatically so a missing env doesn't break
+// local development. We do NOT add speculative production hostnames;
+// whoever deploys the app is responsible for setting ALLOWED_ORIGINS on
+// both Vercel and Render to match. A change in either place without the
+// other will cause CSRF failures — by design, since both sides must
+// agree on what origins are trusted.
+function buildTrustedOrigins(): Set<string> {
+  const env = process.env.ALLOWED_ORIGINS ?? "";
+  const parts = env
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  // Local dev origins are always trusted. They are not secret; they
+  // exist only because the dev server is local. Including them by
+  // default means a fresh local checkout doesn't need an env tweak.
+  parts.push("http://localhost:3000", "http://127.0.0.1:3000");
+  return new Set(parts);
+}
+
+const TRUSTED_ORIGINS: Set<string> = buildTrustedOrigins();
 
 // looksLikeJWT reports whether the cookie value has the shape of a JWT
 // (three non-empty base64url chunks separated by '.'). We do NOT verify
@@ -62,7 +80,7 @@ export function proxy(request: NextRequest) {
   // ----- CSRF guard for state-changing requests -------------------
   if (!SAFE_METHODS[method]) {
     const origin = request.headers.get("origin");
-    if (origin !== null && !TRUSTED_ORIGINS[origin]) {
+    if (origin !== null && !TRUSTED_ORIGINS.has(origin)) {
       return new NextResponse(
         JSON.stringify({
           success: false,

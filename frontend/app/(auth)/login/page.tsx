@@ -30,13 +30,13 @@ export default function LoginPage() {
     try {
       const res = await authApi.login({ email, password });
       const { token, user } = res.data.data;
+      // Phase 3: single source of truth is the cookie (see lib/auth-cookie.ts).
+      // The proxy reads the cookie to gate auth; the api-client reads
+      // the cookie to build Authorization headers. We deliberately do
+      // NOT mirror the token to localStorage — keeping two sources of
+      // truth for an auth credential is a foot-gun for stale-token bugs.
       setToken(token);
       setUser(user);
-      // Phase 3: legacy localStorage keys kept as a fallback for code
-      // paths we have not yet migrated (e.g. menu components that read
-      // dmtool_user). New code reads from cookies via auth-cookie.ts.
-      localStorage.setItem("dmtool_token", token);
-      localStorage.setItem("dmtool_user", JSON.stringify(user));
       router.push("/dashboard");
     } catch (err: any) {
       const errorData = err.response?.data?.error;

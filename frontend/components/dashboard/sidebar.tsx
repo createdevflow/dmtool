@@ -130,8 +130,8 @@ const navGroups: NavGroup[] = [
       { name: "Create Project", href: "/projects/create", icon: PlusSquare },
       { name: "Project Settings", href: "/projects/settings", icon: Settings },
       { name: "Settings", href: "/settings", icon: Settings, modeExtras: ["combined"] },
-      { name: "Billing", href: "/billing", icon: CreditCard, modeExtras: ["combined"] },
-      { name: "Integrations", href: "/integrations", icon: Blocks, modeExtras: ["combined"] },
+      { name: "Billing", href: "/billing", icon: CreditCard },
+      { name: "Integrations", href: "/integrations", icon: Blocks },
     ],
   },
 ];

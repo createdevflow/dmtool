@@ -45,8 +45,8 @@ func main() {
 	}
 
 	targets := map[string]int{
-		"search":   11,
-		"social":   11,
+		"search":   13,
+		"social":   13,
 		"combined": 16,
 	}
 

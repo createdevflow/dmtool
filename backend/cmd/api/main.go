@@ -21,6 +21,7 @@ import (
 	"backend/internal/middleware"
 	"backend/internal/repository"
 	"backend/internal/services"
+	"backend/internal/services/entitlements"
 	"backend/internal/utils"
 	"backend/internal/workers"
 
@@ -50,6 +51,10 @@ func main() {
 	seoRepo := repository.NewSEORepository(database)
 	insightRepo := repository.NewInsightRepository(database)
 	taskRepo := repository.NewTaskRepository(database)
+	subscriptionRepo := repository.NewSubscriptionRepository(database)
+	planRepo := repository.NewPlanRepository(database)
+
+	entitlementsSvc := entitlements.New(database, subscriptionRepo, planRepo, projectRepo)
 
 	encKey := utils.EncryptionKeyFromString(cfg.EncryptionKey)
 
@@ -147,17 +152,19 @@ func main() {
 	// Public SEO audit (no auth required — for landing page demo)
 	seoHandlerPublic := handlers.NewSEOHandler(projectRepo, seoRepo, oauthRepo, dataForSEOService, crawlerService, keywordService, encKey)
 	r.GET("/api/public/seo-audit", seoHandlerPublic.PublicAudit)
-
-	// ── 8. Auth routes (public, with strict rate limit) ──────────────────────
 	authGroup := r.Group("/api/auth")
 	authGroup.Use(middleware.RateLimitAuth())
-	registerAuthRoutes(authGroup, database, userRepo, tokenRepo, projectRepo, privateKey, publicKey, encKey, cfg)
+	registerAuthRoutes(authGroup, database, userRepo, tokenRepo, projectRepo, subscriptionRepo, privateKey, publicKey, encKey, cfg)
+
+	// Public plans endpoint (no auth — pricing page)
+	r.GET("/api/plans", handlers.NewPlansHandler(planRepo).List)
+
 
 	// ── 9. Protected API routes ──────────────────────────────────────────────
 	api := r.Group("/api")
 	api.Use(middleware.JWTAuth(publicKey))
 
-	registerProjectRoutes(api, projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOService, rapidAPIService, crawlerService)
+	registerProjectRoutes(api, projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOService, rapidAPIService, crawlerService, entitlementsSvc)
 	registerDashboardRoutes(api, projectRepo, metricRepo, insightRepo, seoRepo, taskRepo)
 	registerSEORoutes(api, projectRepo, seoRepo, oauthRepo, dataForSEOService, crawlerService, keywordService, encKey)
 	registerSocialRoutes(api, projectRepo, oauthRepo, metricRepo, rapidAPIService, socialScraperService, metaService, linkedinService, cfg.MetaPageAccessToken, os.Getenv("LINKEDIN_ACCESS_TOKEN"), encKey)
@@ -227,10 +234,11 @@ func registerAuthRoutes(g *gin.RouterGroup, _ *gorm.DB,
 	userRepo repository.UserRepository,
 	tokenRepo repository.RefreshTokenRepository,
 	projectRepo repository.ProjectRepository,
+	subscriptionRepo repository.SubscriptionRepository,
 	privKey *rsa.PrivateKey, pubKey *rsa.PublicKey,
 	encKey []byte, cfg *config.Config) {
 
-	h := handlers.NewAuthHandler(userRepo, tokenRepo, projectRepo, privKey, pubKey, encKey, cfg)
+	h := handlers.NewAuthHandler(userRepo, tokenRepo, projectRepo, subscriptionRepo, privKey, pubKey, encKey, cfg)
 
 	g.POST("/register", h.Register)
 	g.POST("/login", h.Login)
@@ -241,8 +249,9 @@ func registerAuthRoutes(g *gin.RouterGroup, _ *gorm.DB,
 
 func registerProjectRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, database *gorm.DB, encKey []byte,
 	metricRepo repository.MetricRepository, oauthRepo repository.OAuthRepository, seoRepo repository.SEORepository,
-	dataForSEOSvc services.DataForSEOService, rapidAPISvc services.RapidAPIService, crawler services.SEOCrawlerService) {
-	h := handlers.NewProjectHandler(projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOSvc, rapidAPISvc, crawler)
+	dataForSEOSvc services.DataForSEOService, rapidAPISvc services.RapidAPIService, crawler services.SEOCrawlerService,
+	ent *entitlements.Service) {
+	h := handlers.NewProjectHandler(projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOSvc, rapidAPISvc, crawler, ent)
 
 	g.GET("/projects", h.List)
 	g.POST("/projects", h.Create)

@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"errors"
 	"log"
+	"net/http"
 	"strconv"
 
 	"backend/internal/models"
 	"backend/internal/repository"
 	"backend/internal/services"
+	"backend/internal/services/entitlements"
 	"backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +24,7 @@ type ProjectHandler struct {
 	dataForSEOSvc  services.DataForSEOService
 	rapidAPISvc    services.RapidAPIService
 	crawlerService services.SEOCrawlerService
+	entitlements   *entitlements.Service
 	db             *gorm.DB
 	encKey         []byte
 }
@@ -35,6 +39,7 @@ func NewProjectHandler(
 	dataForSEOSvc services.DataForSEOService,
 	rapidAPISvc services.RapidAPIService,
 	crawler services.SEOCrawlerService,
+	ent *entitlements.Service,
 ) *ProjectHandler {
 	return &ProjectHandler{
 		projectRepo:    projectRepo,
@@ -44,6 +49,7 @@ func NewProjectHandler(
 		dataForSEOSvc:  dataForSEOSvc,
 		rapidAPISvc:    rapidAPISvc,
 		crawlerService: crawler,
+		entitlements:   ent,
 		db:             database,
 		encKey:         encKey,
 	}
@@ -72,12 +78,53 @@ type ProjectRequest struct {
 	FacebookHandle  string `json:"fb_handle"`
 }
 
+// gateSEOProject enforces the per-plan SEO project limit. Returns false
+// (and writes the response) when the user is at the limit; returns true
+// when the create may proceed.
+func (h *ProjectHandler) gateSEOProject(c *gin.Context, userID uint, goal string) bool {
+	allowed, current, limit, planCode, err := h.entitlements.CanCreateSEOProject(c.Request.Context(), userID, goal)
+	if err != nil {
+		var qx *entitlements.QuotaExceededError
+		if errors.As(err, &qx) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "QUOTA_EXCEEDED",
+					"message": "You've reached the limit for your current plan.",
+					"quota":   qx.QuotaName,
+					"current": qx.Current,
+					"limit":   qx.Limit,
+					"plan":    qx.PlanCode,
+				},
+				"data": gin.H{
+					"current": qx.Current,
+					"limit":   qx.Limit,
+					"plan":    qx.PlanCode,
+				},
+			})
+			return false
+		}
+		utils.InternalError(c, "Failed to check plan entitlement")
+		return false
+	}
+	// Expose the entitlement info so the frontend can show an upgrade
+	// prompt before the user even tries to exceed the limit.
+	c.Header("X-Plan-Code", planCode)
+	c.Header("X-Plan-Limit", strconv.Itoa(limit))
+	c.Header("X-Plan-Current", strconv.Itoa(current))
+	return allowed
+}
+
 func (h *ProjectHandler) Create(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 
 	var req ProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationError(c, err)
+		return
+	}
+
+	if !h.gateSEOProject(c, userID, req.Goal) {
 		return
 	}
 
@@ -98,7 +145,6 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	if project.Name == "" {
 		project.Name = utils.DeriveNameFromURL(req.URL)
 	}
-
 
 	if err := h.projectRepo.Create(project); err != nil {
 		utils.InternalError(c, "Failed to create project")
@@ -123,6 +169,12 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	var req ProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationError(c, err)
+		return
+	}
+
+	// Note: changing goal from "social" to "seo" could push the user
+	// over the limit. Re-gate here too.
+	if !h.gateSEOProject(c, userID, req.Goal) {
 		return
 	}
 
@@ -175,21 +227,24 @@ func (h *ProjectHandler) Onboard(c *gin.Context) {
 		return
 	}
 
-	project := &models.Project{
-		UserID:      userID,
-		Name:        req.Name, // If name is empty, we could derive from URL
-		URL:         req.URL,
-		Goal:        req.Goal,
-		Status:      "active",
-		Health:      "analyzing",
-		HealthScore: 75, // Starting score for demo
-		IGHandle:    req.InstagramHandle,
-		TwitterHandle:   req.TwitterHandle,
-		LinkedinHandle:  req.LinkedinHandle,
-		FBHandle:        req.FacebookHandle,
+	if !h.gateSEOProject(c, userID, req.Goal) {
+		return
 	}
 
-	// Logic to derive name
+	project := &models.Project{
+		UserID:        userID,
+		Name:          req.Name,
+		URL:           req.URL,
+		Goal:          req.Goal,
+		Status:        "active",
+		Health:        "analyzing",
+		HealthScore:   75,
+		IGHandle:      req.InstagramHandle,
+		TwitterHandle: req.TwitterHandle,
+		LinkedinHandle: req.LinkedinHandle,
+		FBHandle:      req.FacebookHandle,
+	}
+
 	if project.Name == "" {
 		if req.URL != "" {
 			project.Name = utils.DeriveNameFromURL(req.URL)
@@ -211,10 +266,7 @@ func (h *ProjectHandler) Onboard(c *gin.Context) {
 		return
 	}
 
-	// Trigger seeder for new project
 	go utils.SeedProject(h.db, project.ID)
-
-	// Auto-sync: If user already has OAuth credentials, trigger immediate data sync
 	go h.autoSyncNewProject(project, userID)
 
 	utils.Success(c, gin.H{
@@ -227,7 +279,6 @@ func (h *ProjectHandler) Onboard(c *gin.Context) {
 func (h *ProjectHandler) autoSyncNewProject(project *models.Project, userID uint) {
 	log.Printf("[project] Auto-sync triggered for new project %d (%s)", project.ID, project.Name)
 
-	// 1. Traffic Sync (DataForSEO)
 	if project.URL != "" && h.dataForSEOSvc != nil {
 		metrics, err := h.dataForSEOSvc.FetchEstimatedTraffic(project.URL)
 		if err == nil {
@@ -239,7 +290,6 @@ func (h *ProjectHandler) autoSyncNewProject(project *models.Project, userID uint
 		}
 	}
 
-	// 2. Social Sync (RapidAPI)
 	if project.IGHandle != "" && h.rapidAPISvc != nil {
 		sm, err := h.rapidAPISvc.FetchInstagramProfile(project.IGHandle)
 		if err == nil && sm != nil && sm.Followers > 0 {
@@ -249,7 +299,6 @@ func (h *ProjectHandler) autoSyncNewProject(project *models.Project, userID uint
 		}
 	}
 
-	// 4. Always run SEO crawl in background
 	if project.URL != "" && h.crawlerService != nil {
 		crawlResult, err := h.crawlerService.Crawl(project.URL)
 		if err == nil {

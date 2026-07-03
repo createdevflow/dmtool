@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rsa"
+	"log"
 	"time"
 
 	"backend/internal/config"
@@ -14,35 +15,36 @@ import (
 )
 
 type AuthHandler struct {
-	userRepo    repository.UserRepository
-	tokenRepo   repository.RefreshTokenRepository
-	projectRepo repository.ProjectRepository
-	privKey     *rsa.PrivateKey
-	pubKey      *rsa.PublicKey
-	encKey      []byte
-	cfg         *config.Config
+	userRepo         repository.UserRepository
+	tokenRepo        repository.RefreshTokenRepository
+	projectRepo      repository.ProjectRepository
+	subscriptionRepo repository.SubscriptionRepository
+	privKey          *rsa.PrivateKey
+	pubKey           *rsa.PublicKey
+	encKey           []byte
+	cfg              *config.Config
 }
-
 func NewAuthHandler(
 	userRepo repository.UserRepository,
 	tokenRepo repository.RefreshTokenRepository,
 	projectRepo repository.ProjectRepository,
+	subscriptionRepo repository.SubscriptionRepository,
 	privKey *rsa.PrivateKey,
 	pubKey *rsa.PublicKey,
 	encKey []byte,
 	cfg *config.Config,
 ) *AuthHandler {
 	return &AuthHandler{
-		userRepo:    userRepo,
-		tokenRepo:   tokenRepo,
-		projectRepo: projectRepo,
-		privKey:     privKey,
-		pubKey:      pubKey,
-		encKey:      encKey,
-		cfg:         cfg,
+		userRepo:         userRepo,
+		tokenRepo:        tokenRepo,
+		projectRepo:      projectRepo,
+		subscriptionRepo: subscriptionRepo,
+		privKey:          privKey,
+		pubKey:           pubKey,
+		encKey:           encKey,
+		cfg:              cfg,
 	}
 }
-
 type RegisterRequest struct {
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
@@ -82,6 +84,20 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if err := h.userRepo.Create(user); err != nil {
 		utils.InternalError(c, "Failed to create account")
 		return
+	}
+	// Auto-subscribe the new user to the default (free) plan. This row is
+	// the source of truth for entitlements — entitlements.ResolveSubscription
+	// falls back to the default if the row is missing, but we create it
+	// explicitly here so admin views and the user management surface are
+	// simpler.
+	sub := &models.Subscription{
+		UserID:   user.ID,
+		PlanCode: "free",
+		Status:   models.SubscriptionStatusActive,
+		StartsAt: time.Now(),
+	}
+	if err := h.subscriptionRepo.Create(sub); err != nil {
+		log.Printf("[auth] WARN: failed to auto-subscribe user %d: %v", user.ID, err)
 	}
 
 	// Issue tokens

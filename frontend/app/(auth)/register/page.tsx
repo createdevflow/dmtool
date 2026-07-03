@@ -7,12 +7,13 @@ import { motion } from "framer-motion";
 import { Activity, ArrowRight, AlertCircle, Sparkles, Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { authApi } from "@/lib/api-client";
+import { setToken, setUser } from "@/lib/auth-cookie";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("+91 "); // Pre-filled country code
+  const [phone, setPhone] = useState("+91 ");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -31,10 +32,13 @@ export default function RegisterPage() {
     try {
       const res = await authApi.register({ name, email, password });
       const { token, user } = res.data.data;
+      setToken(token);
+      setUser(user);
+      // Phase 3: legacy localStorage keys kept as a fallback for code
+      // paths we have not yet migrated. New code reads from cookies.
       localStorage.setItem("dmtool_token", token);
       localStorage.setItem("dmtool_user", JSON.stringify(user));
       router.push("/onboarding");
-
 
 
     } catch (err: any) {

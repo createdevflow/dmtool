@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { Activity, ArrowRight, AlertCircle, Zap, Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { authApi } from "@/lib/api-client";
+import { setToken, setUser } from "@/lib/auth-cookie";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -29,10 +30,14 @@ export default function LoginPage() {
     try {
       const res = await authApi.login({ email, password });
       const { token, user } = res.data.data;
+      setToken(token);
+      setUser(user);
+      // Phase 3: legacy localStorage keys kept as a fallback for code
+      // paths we have not yet migrated (e.g. menu components that read
+      // dmtool_user). New code reads from cookies via auth-cookie.ts.
       localStorage.setItem("dmtool_token", token);
       localStorage.setItem("dmtool_user", JSON.stringify(user));
       router.push("/dashboard");
-
     } catch (err: any) {
       const errorData = err.response?.data?.error;
       const errorMessage = typeof errorData === 'object' ? errorData.message : errorData;

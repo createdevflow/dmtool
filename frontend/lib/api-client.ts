@@ -1,4 +1,5 @@
 import axios from "axios";
+import { readCookie, COOKIE_TOKEN, clearAuthCookie } from "./auth-cookie";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
 
@@ -9,11 +10,12 @@ const apiClient = axios.create({
   },
 });
 
-// Request interceptor — attach JWT token to every request
+// Request interceptor — attach JWT token (from cookie) to every request.
+// Phase 3 source-of-truth is the cookie so the proxy can gate too.
 apiClient.interceptors.request.use(
   (config) => {
     if (typeof window !== "undefined") {
-      const token = localStorage.getItem("dmtool_token");
+      const token = readCookie(COOKIE_TOKEN);
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -23,13 +25,14 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — handle 401 (token expired) globally
+// Response interceptor — handle 401 (token expired) globally.
+// Clears the auth cookie instead of poking localStorage.
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       if (typeof window !== "undefined") {
-        localStorage.removeItem("dmtool_token");
+        clearAuthCookie(COOKIE_TOKEN);
         const path = window.location.pathname;
         if (path !== "/login" && path !== "/register") {
           window.location.href = "/login";
@@ -50,24 +53,23 @@ export const authApi = {
   logout: () => apiClient.post("/auth/logout"),
 };
 
-// ── Projects API ──────────────────────────────────────────────────────────────
+// ── Projects API ─────────────────────────────────────────────────────────────
 export const projectsApi = {
   list: () => apiClient.get("/projects"),
-  create: (data: any) => apiClient.post("/projects", data),
-  update: (id: number, data: any) => apiClient.patch(`/projects/${id}`, data),
+  create: (data: { name: string; url: string; goal: string; ig_handle?: string; twitter_handle?: string; linkedin_handle?: string; fb_handle?: string }) =>
+    apiClient.post("/projects", data),
+  update: (id: number, data: Record<string, unknown>) => apiClient.patch(`/projects/${id}`, data),
   delete: (id: number) => apiClient.delete(`/projects/${id}`),
-  onboard: (data: any) => apiClient.post("/onboard", data),
+  onboard: (data: Record<string, unknown>) => apiClient.post("/onboard", data),
 };
 
-// ── Dashboard API ─────────────────────────────────────────────────────────────
 export const dashboardApi = {
-  // Projects (used in dashboard)
   getProjects: () => apiClient.get("/projects"),
-  onboard: (data: any) => apiClient.post("/onboard", data),
+  onboard: (data: Record<string, unknown>) => apiClient.post("/onboard", data),
   deleteProject: (id: number) => apiClient.delete(`/projects/${id}`),
-  updateProject: (id: number, data: any) => apiClient.patch(`/projects/${id}`, data),
+  updateProject: (id: number, data: Record<string, unknown>) =>
+    apiClient.patch(`/projects/${id}`, data),
 
-  // Dashboard data
   getSnapshot: (projectId: number) =>
     apiClient.get(`/dashboard/snapshot?project_id=${projectId}`),
   getMetrics: (projectId: number, days = 30) =>
@@ -76,21 +78,17 @@ export const dashboardApi = {
     apiClient.get(`/dashboard/insights?project_id=${projectId}`),
   getTasks: (projectId: number) =>
     apiClient.get(`/dashboard/tasks?project_id=${projectId}`),
-  createTask: (data: any) => apiClient.post(`/dashboard/tasks`, data),
-  toggleTask: (id: number, projectId?: number) => apiClient.patch(`/tasks/${id}/toggle${projectId ? `?project_id=${projectId}` : ''}`),
+  createTask: (data: Record<string, unknown>) => apiClient.post(`/dashboard/tasks`, data),
+  toggleTask: (id: number, projectId?: number) =>
+    apiClient.patch(`/tasks/${id}/toggle${projectId ? `?project_id=${projectId}` : ""}`),
   getTraffic: (projectId: number, days = 30) =>
     apiClient.get(`/dashboard/traffic?project_id=${projectId}&days=${days}`),
-  getAlerts: (projectId: number) =>
-    apiClient.get(`/alerts?project_id=${projectId}`),
-  getCompetitors: (projectId: number) =>
-    apiClient.get(`/competitors?project_id=${projectId}`),
+  getAlerts: (projectId: number) => apiClient.get(`/alerts?project_id=${projectId}`),
+  getCompetitors: (projectId: number) => apiClient.get(`/competitors?project_id=${projectId}`),
 
-  // SEO
   runSeoAudit: (projectId: number, url?: string) =>
-    apiClient.post(`/seo/audit/run`, { project_id: projectId, url: url || "" }),
+    apiClient.post(`/seo/audit/run`, { project_id: projectId, url: url ?? "" }),
   getSeoAudit: (projectId: number) =>
-    apiClient.get(`/seo/audit?project_id=${projectId}`),
-  getSeoAuditById: (projectId: number) =>
     apiClient.get(`/seo/audit?project_id=${projectId}`),
   getSeoIssues: (projectId: number, severity?: string) =>
     apiClient.get(
@@ -107,7 +105,6 @@ export const dashboardApi = {
   resolveIssue: (issueId: number, projectId: number) =>
     apiClient.put(`/seo/issues/${issueId}?project_id=${projectId}`),
 
-  // Social
   getSocialInsights: (projectId: number) =>
     apiClient.get(`/social/insights?project_id=${projectId}`),
   refreshSocial: (projectId: number) =>
@@ -121,7 +118,6 @@ export const dashboardApi = {
   getRelatedProfiles: (projectId: number) =>
     apiClient.get(`/social/related?project_id=${projectId}`),
 
-  // Content generation
   generateContent: (data: {
     project_id: number;
     topic: string;
@@ -129,7 +125,6 @@ export const dashboardApi = {
     tone?: string;
   }) => apiClient.post(`/content/generate`, data),
 
-  // Integrations
   getIntegrations: () => apiClient.get("/integrations"),
   getGoogleAuthUrl: () => apiClient.get("/integrations/google/auth-url"),
   getMetaAuthUrl: () => apiClient.get("/integrations/meta/auth-url"),
@@ -137,39 +132,34 @@ export const dashboardApi = {
   disconnectIntegration: (provider: string) =>
     apiClient.delete(`/integrations/${provider}`),
 
-  // Legacy aliases (keep for compatibility with existing pages)
-  generateKeywordsLegacy: (data: any) => apiClient.post("/seo/keywords", data),
+  generateKeywordsLegacy: (data: Record<string, unknown>) => apiClient.post("/seo/keywords", data),
 
   getProject: (id: number) => apiClient.get(`/projects/${id}`),
 
   getAutomations: (projectId: number) => apiClient.get(`/system/automations?project_id=${projectId}`),
-  createAutomation: (data: any) => apiClient.post(`/system/automations`, data),
+  createAutomation: (data: Record<string, unknown>) => apiClient.post(`/system/automations`, data),
   toggleAutomation: (id: number) => apiClient.patch(`/system/automations/${id}/toggle`),
-  
+
   getCalendar: (projectId: number) => apiClient.get(`/system/calendar?project_id=${projectId}`),
-  createCalendarEvent: (data: any) => {
+  createCalendarEvent: (data: FormData | Record<string, unknown>) => {
     const isFormData = typeof FormData !== "undefined" && data instanceof FormData;
     return apiClient.post(`/system/calendar/event`, data, isFormData ? { headers: { "Content-Type": "multipart/form-data" } } : undefined);
   },
-  updateCalendarEvent: (id: number, data: any) => {
+  updateCalendarEvent: (id: number, data: FormData | Record<string, unknown>) => {
     const isFormData = typeof FormData !== "undefined" && data instanceof FormData;
     return apiClient.patch(`/system/calendar/event/${id}`, data, isFormData ? { headers: { "Content-Type": "multipart/form-data" } } : undefined);
   },
   deleteCalendarEvent: (id: number) => apiClient.delete(`/system/calendar/event/${id}`),
 
-  // Sync
   syncProject: (projectId: number) => apiClient.post(`/projects/${projectId}/sync`),
 
-  // SEO Extended
   getRankTracking: (projectId: number) => apiClient.get(`/seo/rank-tracking?project_id=${projectId}`),
   getBacklinks: (projectId: number) => apiClient.get(`/seo/backlinks?project_id=${projectId}`),
 
-  // Social History (for delta calculations)
   getSocialHistoryForDelta: (projectId: number, days = 7) =>
     apiClient.get(`/social/history?project_id=${projectId}&days=${days}`),
 };
 
-// ── Social API (separate namespace for clarity) ───────────────────────────────
 export const socialApi = {
   getInsights: (projectId: number) =>
     apiClient.get(`/social/insights?project_id=${projectId}`),
@@ -183,10 +173,9 @@ export const socialApi = {
     ),
 };
 
-// ── SEO API (separate namespace) ──────────────────────────────────────────────
 export const seoApi = {
   runAudit: (projectId: number, url?: string) =>
-    apiClient.post(`/seo/audit/run`, { project_id: projectId, url: url || "" }),
+    apiClient.post(`/seo/audit/run`, { project_id: projectId, url: url ?? "" }),
   getStatus: (projectId: number) =>
     apiClient.get(`/seo/audit?project_id=${projectId}`),
   getIssues: (projectId: number, severity?: string) =>
@@ -205,7 +194,6 @@ export const seoApi = {
     apiClient.put(`/seo/issues/${issueId}?project_id=${projectId}`),
 };
 
-// ── Public API (no auth required) ────────────────────────────────────────────
 export const publicApi = {
   seoAudit: (url: string) =>
     axios.get(`${API_BASE.replace("/api", "")}/api/public/seo-audit?url=${encodeURIComponent(url)}`),

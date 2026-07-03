@@ -53,8 +53,10 @@ func main() {
 	taskRepo := repository.NewTaskRepository(database)
 	subscriptionRepo := repository.NewSubscriptionRepository(database)
 	planRepo := repository.NewPlanRepository(database)
+	prefRepo := repository.NewUserPreferenceRepository(database)
 
 	entitlementsSvc := entitlements.New(database, subscriptionRepo, planRepo, projectRepo)
+
 
 	encKey := utils.EncryptionKeyFromString(cfg.EncryptionKey)
 
@@ -171,9 +173,12 @@ func main() {
 	registerContentRoutes(api, projectRepo, insightRepo, openaiService, cfg)
 	registerTaskRoutes(api, insightRepo)
 	registerSystemRoutes(api, projectRepo, taskRepo, cfg)
-	registerSyncRoutes(api, projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOService, rapidAPIService, crawlerService, encKey)
 	registerIntegrationRoutes(api, projectRepo, oauthRepo, gscOAuthConfig, metaOAuthConfig, linkedinOAuthConfig, encKey, cfg)
 
+	// User preferences (phase 3): read/update dashboard_mode.
+	prefsHandler := handlers.NewPreferencesHandler(prefRepo)
+	api.GET("/users/me/preferences", prefsHandler.Get)
+	api.PATCH("/users/me/preferences", prefsHandler.UpdateMode)
 	// ── 10. Start server ─────────────────────────────────────────────────────
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	log.Printf("🚀 DMTool v%s starting on %s [%s mode]", cfg.Version, addr, cfg.AppEnv)

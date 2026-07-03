@@ -170,6 +170,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	utils.NoContent(c)
 }
 
+
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -184,6 +185,55 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	}
 
 	utils.Success(c, user, nil)
+}
+
+// UpdateMeBody is the body shape for PATCH /api/auth/me.
+type UpdateMeBody struct {
+	DashboardMode string `json:"dashboard_mode" binding:"required"`
+}
+
+// validDashboardMode reports whether v is one of the allowed mode
+// literals: "search" | "social" | "combined".
+func validDashboardMode(v string) bool {
+	switch v {
+	case models.DashboardModeSearch, models.DashboardModeSocial, models.DashboardModeCombined:
+		return true
+	}
+	return false
+}
+
+// UpdateMe writes mutable fields on the calling user. Phase 4 only
+// exposes dashboard_mode; future fields will share this handler.
+func (h *AuthHandler) UpdateMe(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		utils.Unauthorized(c, "Not authenticated")
+		return
+	}
+	var req UpdateMeBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(c, err)
+		return
+	}
+	if !validDashboardMode(req.DashboardMode) {
+		utils.BadRequest(c, "dashboard_mode must be one of: search, social, combined", "VALIDATION_ERROR")
+		return
+	}
+
+	user, err := h.userRepo.FindByID(userID.(uint))
+	if err != nil || user == nil {
+		utils.NotFound(c, "User not found")
+		return
+	}
+	user.DashboardMode = req.DashboardMode
+	if err := h.userRepo.Update(user); err != nil {
+		utils.InternalError(c, "Failed to update user")
+		return
+	}
+	utils.Success(c, gin.H{
+		"user_id":        user.ID,
+		"dashboard_mode": user.DashboardMode,
+	}, nil)
 }
 
 func (h *AuthHandler) issueTokens(c *gin.Context, user *models.User) {

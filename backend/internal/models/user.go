@@ -14,7 +14,6 @@ const (
 	RoleAdmin  = "admin"
 	RoleViewer = "viewer"
 )
-
 // User represents a registered account on DMTool.
 type User struct {
 	ID        uint           `gorm:"primaryKey" json:"id"`
@@ -28,5 +27,14 @@ type User struct {
 	PasswordHash string `gorm:"not null" json:"-"`
 	Role         string `gorm:"default:owner" json:"role"` // owner | admin | viewer
 
+	// DashboardMode controls which nav groups render. search|social|combined.
+	// Phase 4 added this. Existing users will see the column added by
+	// db.migrate via a forward-only ALTER on first boot after deploy.
+	DashboardMode string `gorm:"not null;default:combined;size:16" json:"dashboard_mode"`
+
 	Projects []Project `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"projects,omitempty"`
 }
+
+// Mode constants are defined in user_preference.go; constants reused
+// here to keep callers from importing both files. (Future cleanup:
+// pick one canonical home.)

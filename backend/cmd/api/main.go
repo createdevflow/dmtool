@@ -250,6 +250,7 @@ func registerAuthRoutes(g *gin.RouterGroup, _ *gorm.DB,
 	g.POST("/refresh", h.Refresh)
 	g.POST("/logout", h.Logout)
 	g.GET("/me", middleware.JWTAuth(pubKey), h.Me)
+	g.PATCH("/me", middleware.JWTAuth(pubKey), h.UpdateMe)
 }
 
 func registerProjectRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, database *gorm.DB, encKey []byte,

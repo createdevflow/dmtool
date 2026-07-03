@@ -16,7 +16,8 @@ import (
 // idempotent ("CREATE TABLE IF NOT EXISTS" on both PostgreSQL and SQLite).
 //
 // Scope rules:
-//   - Forward-only. No DROP. No ALTER.
+//   - Forward-only. No DROP. No ALTER (except idempotent column adds
+//     gated on HasColumn, see addUserDashboardModeColumn below).
 //   - Idempotent. Re-running is a no-op.
 //   - Called from db.Init unconditionally — not gated by APP_ENV.
 //
@@ -50,8 +51,30 @@ func RunMigrations(database *gorm.DB) error {
 	log.Printf("[migrate] created %d tables (skipped %d already present)\n",
 		created, len(targets)-created)
 
+	// Forward-only column adds for existing tables. Phase 4: add
+	// User.DashboardMode. Idempotent — Migrator.HasColumn gates each
+	// addition, so re-running is a no-op.
+	if err := addUserDashboardModeColumn(migrator); err != nil {
+		return err
+	}
+
 	// Idempotent seed. Re-runs are no-ops because we use ON CONFLICT.
 	return SeedPlans(database)
+}
+
+// addUserDashboardModeColumn adds users.dashboard_mode if missing. SQLite
+// (dev) and PostgreSQL (prod) both support ALTER TABLE ADD COLUMN with
+// a default value, and both treat this as a no-op when the column
+// already exists. The migrator's HasColumn check makes that explicit.
+func addUserDashboardModeColumn(migrator gorm.Migrator) error {
+	if !migrator.HasTable("users") || migrator.HasColumn(&models.User{}, "dashboard_mode") {
+		return nil
+	}
+	if err := migrator.AddColumn(&models.User{}, "DashboardMode"); err != nil {
+		return err
+	}
+	log.Println("[migrate] added column users.dashboard_mode (default 'combined')")
+	return nil
 }
 
 // SeedPlans inserts the three baseline plan rows if absent. Idempotent.

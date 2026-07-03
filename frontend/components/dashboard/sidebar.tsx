@@ -22,6 +22,8 @@ import {
   ChevronDown,
   ChevronRight,
   Globe,
+  CreditCard,
+  Blocks,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardMode, type Mode } from "./dashboard-mode-context";
@@ -127,6 +129,9 @@ const navGroups: NavGroup[] = [
       { name: "All Projects", href: "/projects", icon: FolderOpen },
       { name: "Create Project", href: "/projects/create", icon: PlusSquare },
       { name: "Project Settings", href: "/projects/settings", icon: Settings },
+      { name: "Settings", href: "/settings", icon: Settings, modeExtras: ["combined"] },
+      { name: "Billing", href: "/billing", icon: CreditCard, modeExtras: ["combined"] },
+      { name: "Integrations", href: "/integrations", icon: Blocks, modeExtras: ["combined"] },
     ],
   },
 ];

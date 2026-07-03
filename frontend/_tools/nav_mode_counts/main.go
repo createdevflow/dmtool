@@ -47,7 +47,7 @@ func main() {
 	targets := map[string]int{
 		"search":   11,
 		"social":   11,
-		"combined": 13,
+		"combined": 16,
 	}
 
 	failed := false

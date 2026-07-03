@@ -1,47 +1,77 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, LayoutDashboard, BrainCircuit, CheckSquare, Bell,
-  FolderOpen, PlusSquare, Settings,
-  Search, BarChart3, Link as LinkIcon, TrendingUp,
-  Share2, Users, Target, Repeat, MessageSquare,
-  PenTool, ImageIcon, Crosshair, PieChart,
-  FileText, Calendar, Zap, Blocks, CreditCard, ChevronDown, ChevronRight, Globe } from "lucide-react";
+import {
+  Activity,
+  LayoutDashboard,
+  FolderOpen,
+  PlusSquare,
+  Settings,
+  Search,
+  BarChart3,
+  TrendingUp,
+  Users,
+  Target,
+  MessageSquare,
+  PenTool,
+  ImageIcon,
+  Link as LinkIcon,
+  Crosshair,
+  ChevronDown,
+  ChevronRight,
+  Globe,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardMode, type Mode } from "./dashboard-mode-context";
 import { ModeSwitcher } from "./mode-switcher";
 
-// Modes a nav group belongs to. Items are filtered by the current mode.
-// search + combined: SEO Intelligence.
-// social + combined: Social Media.
-// all three: the rest.
+// Mode visibility arrays. Single source of truth for nav inclusion.
 const ALL: Mode[] = ["search", "social", "combined"];
 const SEARCH_OR_COMBINED: Mode[] = ["search", "combined"];
 const SOCIAL_OR_COMBINED: Mode[] = ["social", "combined"];
 
-// Define the comprehensive navigation structure with mode tags.
-const navGroups = [
+// Curated-subset design (the agreed spec):
+//
+//   SEARCHMODE  →  Dashboard (1) + SEO Intelligence (4) +
+//                  AI Engine (3) + Account (3)    = 11 items, 4 groups
+//   SOCIALMODE  →  Dashboard (1) + Social Media (4) +
+//                  AI Engine (3) + Account (3)    = 11 items, 4 groups
+//   COMBINED    →  Dashboard (1) + SEO (3 — drop Backlinks) +
+//                  Social (3 — drop Profile Discovery) +
+//                  AI Engine (3) + Account (3)    = 13 items, 5 groups
+//
+// Items hidden from the sidebar move into per-mode overview
+// SectionTabs drill-downs (built in a later phase):
+//   * Backlink Analysis       → Site Explorer drill-down
+//   * Profile Discovery       → Profile Analyzer drill-down
+//   * AI Insights / Action Center / Alerts / Custom Reports
+//                              → overview pages per mode
+type NavItem = {
+  name: string;
+  href: string;
+  icon: typeof LayoutDashboard;
+  // Items always render when their group is visible. modeExtras
+  // narrows visibility to specific modes (when the containing group's
+  // modes array is broader than the item's allowed subset).
+  modeExtras?: Mode[];
+};
+
+type NavGroup = {
+  title: string;
+  modes: Mode[];
+  defaultOpen: boolean;
+  items: NavItem[];
+};
+
+const navGroups: NavGroup[] = [
   {
-    title: "Overview",
+    title: "Dashboard",
     modes: ALL,
     defaultOpen: true,
     items: [
-      { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-      { name: "AI Insights", href: "/ai-insights", icon: BrainCircuit, badge: "New" },
-      { name: "Action Center", href: "/action-center", icon: CheckSquare },
-      { name: "Alerts & Notifications", href: "/alerts", icon: Bell },
-    ],
-  },
-  {
-    title: "Project Management",
-    modes: ALL,
-    defaultOpen: false,
-    items: [
-      { name: "All Projects", href: "/projects", icon: FolderOpen },
-      { name: "Create Project", href: "/projects/create", icon: PlusSquare },
-      { name: "Project Settings", href: "/projects/settings", icon: Settings },
+      { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
     ],
   },
   {
@@ -51,7 +81,14 @@ const navGroups = [
     items: [
       { name: "Site Explorer", href: "/seo/site-explorer", icon: Globe },
       { name: "Keyword Research", href: "/seo/keywords", icon: Search },
-      { name: "Backlink Analysis", href: "/seo/backlinks", icon: LinkIcon },
+      {
+        name: "Backlink Analysis",
+        href: "/seo/backlinks",
+        icon: LinkIcon,
+        // Search only: Backlink Analysis moves to Site Explorer
+        // drill-down / SectionTabs for Combined users.
+        modeExtras: ["search"],
+      },
       { name: "Rank Tracking", href: "/seo/rank-tracking", icon: TrendingUp },
     ],
   },
@@ -63,7 +100,13 @@ const navGroups = [
       { name: "Profile Analyzer", href: "/social/profile-analyzer", icon: Users },
       { name: "Content Analytics", href: "/social/insights", icon: BarChart3 },
       { name: "Growth Tracking", href: "/social/growth", icon: Target },
-      { name: "Profile Discovery", href: "/social/competitors", icon: Crosshair },
+      {
+        name: "Profile Discovery",
+        href: "/social/competitors",
+        icon: Crosshair,
+        // Social only: moves to Profile Analyzer drill-down for Combined.
+        modeExtras: ["social"],
+      },
     ],
   },
   {
@@ -77,39 +120,38 @@ const navGroups = [
     ],
   },
   {
-    title: "Analytics & Reports",
+    title: "Account",
     modes: ALL,
     defaultOpen: false,
     items: [
-      { name: "Traffic Dashboard", href: "/analytics/traffic", icon: PieChart },
-      { name: "Custom Reports", href: "/analytics/custom", icon: FileText },
-    ],
-  },
-  {
-    title: "System",
-    modes: ALL,
-    defaultOpen: false,
-    items: [
-      { name: "Content Calendar", href: "/system/calendar", icon: Calendar },
-      { name: "Automations", href: "/system/automations", icon: Zap },
-      { name: "Integrations", href: "/integrations", icon: Blocks },
-      { name: "Billing", href: "/billing", icon: CreditCard },
-      { name: "Settings", href: "/settings", icon: Settings },
+      { name: "All Projects", href: "/projects", icon: FolderOpen },
+      { name: "Create Project", href: "/projects/create", icon: PlusSquare },
+      { name: "Project Settings", href: "/projects/settings", icon: Settings },
     ],
   },
 ];
+
+// Node 22 module-shape: nn uses unused-import warnings, so unused icons
+// pruned (BrainCircuit, FileText, CreditCard, Calendar, Zap, Blocks, etc.).
+// Notes:
+//   * The original 7-group layout grew to 22 items. The curated subset
+//     here caps Combined at 13 items in 5 groups. Search and Social
+//     are each at 11 items in 4 groups (their SEO or Social group is
+//     absent).
+//   * Backlink Analysis and Profile Discovery use modeExtras to leave
+//     the sidebar in Combined mode but stay visible in the per-mode
+//     home mode. This matches the spec.
 
 export function Sidebar() {
   const pathname = usePathname();
   const { mode } = useDashboardMode();
 
-  // Track which groups are open. Initial state respects `defaultOpen`;
-  // local toggle wins on user click.
+  // Track which groups are open. Initial state respects `defaultOpen`.
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
-    navGroups.forEach((g) => {
+    for (const g of navGroups) {
       initial[g.title] = g.defaultOpen;
-    });
+    }
     return initial;
   });
 
@@ -117,12 +159,19 @@ export function Sidebar() {
     setOpenGroups((prev) => ({ ...prev, [title]: !prev[title] }));
   };
 
-  // Phase 4: filter by current mode. The legacy `hasSeoProject /
-  // hasSocialProject` heuristic is replaced — modes are the source of
-  // truth for what nav is visible.
-  const filteredGroups = navGroups.filter((group) =>
-    group.modes.includes(mode)
-  );
+  // Two-level filter:
+  //   1. Group must list this mode in `modes`.
+  //   2. Item must pass: either no modeExtras (always-allow), or its
+  //      modeExtras array contains this mode.
+  const visibleGroups = navGroups
+    .filter((group) => group.modes.includes(mode))
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) => item.modeExtras === undefined || item.modeExtras.includes(mode)
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
 
   return (
     <div className="fixed inset-y-0 left-0 z-50 w-64 flex-col bg-background border-r border-border hidden lg:flex">
@@ -148,7 +197,7 @@ export function Sidebar() {
       {/* Scrollable Navigation Area */}
       <div className="flex flex-1 flex-col overflow-y-auto px-3 py-4 subtle-scrollbar space-y-4">
 
-        {filteredGroups.map((group) => {
+        {visibleGroups.map((group) => {
           const isOpen = openGroups[group.title];
           return (
             <div key={group.title} className="space-y-1">
@@ -181,11 +230,6 @@ export function Sidebar() {
                         >
                           <Icon className="w-4 h-4 shrink-0" />
                           <span className="flex-1 truncate">{item.name}</span>
-                          {item.badge && (
-                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
-                              {item.badge}
-                            </span>
-                          )}
                         </Link>
                       </li>
                     );

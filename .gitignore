@@ -2,7 +2,29 @@ node_modules/
 dist/
 build/
 .next/
+
+# Go
+*.exe
+
+# Database & sqlite
 *.db
 *.sqlite
+
+# Logs
+*.log
+
+# Lockfiles
+package-lock.json
+backend/api.exe
+backend/phase1_api.exe
+
+# Uploads (dev artifact, ephemeral)
+backend/uploads/
+
+# Env files (templates only)
 .env
+.env.example
+**/.env
+
+# OS
 .DS_Store

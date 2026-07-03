@@ -5,6 +5,7 @@ package db
 import (
 	"log"
 	"strings"
+	"time"
 
 	"backend/internal/models"
 
@@ -38,12 +39,22 @@ func Init(databaseURL string, isDev bool) *gorm.DB {
 		}
 		db, err = gorm.Open(glebsqlite.Open(dsn), gormCfg)
 	}
-
 	if err != nil {
 		log.Fatalf("[db] failed to connect to database: %v", err)
 	}
 
-	// AutoMigrate all v2 models (dev only; prod uses SQL migration files)
+	// Configure connection pool. Bounds the in-flight DB load and lets
+	// pure-Go SQLite parallelize reads.
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("[db] failed to get sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+
+	// AutoMigrate all v2 models (dev only; prod uses RunMigrations below).
 	if isDev {
 		if err := db.AutoMigrate(
 			&models.User{},
@@ -56,10 +67,21 @@ func Init(databaseURL string, isDev bool) *gorm.DB {
 			&models.Task{},
 			&models.SEOIssue{},
 			&models.KeywordResult{},
+			&models.Plan{},
+			&models.Subscription{},
+			&models.UserPreference{},
+			&models.AdminAuditLog{},
 		); err != nil {
 			log.Fatalf("[db] AutoMigrate failed: %v", err)
 		}
 		log.Println("[db] AutoMigrate completed successfully")
+	}
+
+	// Production schema migration. Runs in every environment, not gated
+	// by APP_ENV. Idempotent: re-runs are no-ops on tables AutoMigrate
+	// (dev) or a prior RunMigrations (prod) already created.
+	if err := RunMigrations(db); err != nil {
+		log.Fatalf("[db] RunMigrations failed: %v", err)
 	}
 
 	log.Println("[db] Database connection established")

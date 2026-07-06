@@ -483,3 +483,82 @@ mode-rewrite rule.
 
 **Logged**: 2026-07-03, end of phase 5.
 
+### DEFER-004 — Admin user suspension / deletion
+
+**What**: the admin panel can edit a user's profile (name/email/role),
+reset their password, and impersonate them, but it cannot yet
+**suspend** (set a `disabled_at` column that the JWT middleware
+honors) or **delete** the user. Deletion is non-trivial because
+of the cascade to `projects`, `subscriptions`, `oauth_credentials`,
+and `admin_audit_logs` — soft-delete is the safer default.
+
+**Why deferred**: explicit scope cap. The current brief asked for
+user management surfaces, not moderation. Suspension is a
+useful next step but requires (a) a `disabled_at` column on
+`User` (forward migration), (b) a `RequireUserEnabled` middleware
+applied after `JWTAuth`, and (c) the admin-side UI.
+
+**Acceptance criteria for the future pass**:
+1. `users.disabled_at` column added; AutoMigrate handles dev.
+2. A `RequireUserEnabled` middleware on the protected `/api` group
+   that rejects disabled users with 403 `ACCOUNT_DISABLED`.
+3. PATCH `/api/admin/users/:id {disabled: true}` and the
+   corresponding list-column display.
+4. Soft-delete endpoint that stamps `deleted_at` on the user and
+   revokes all refresh tokens.
+
+**Logged**: 2026-07-06, end of phase 7.
+
+### DEFER-005 — SubscriptionEvent history table
+
+**What**: today the `subscriptions` table is the single source of
+truth for a user's current plan; `phase 1` ships the
+`admin_audit_logs` table for admin actions but there is no
+**event** table that records "user upgraded from pro_monthly to
+pro_yearly on 2026-07-01" or "trial converted to paid on ...". The
+admin panel can show recent admin actions but cannot show a user's
+subscription timeline over time.
+
+**Why deferred**: not in the explicit scope of the admin panel.
+Today the row mutation happens via `subscriptionRepo.UpdatePlanAndStatus`
+which updates the existing row in place; an `event` table would
+require either (a) an `append_event` on every mutation (adds a
+write per change), or (b) a trigger. Either is a small amount of
+code but needs design decisions about retention and access.
+
+**Acceptance criteria for the future pass**:
+1. New `subscription_events` table (`id, subscription_id, from_plan,
+   to_plan, from_status, to_status, occurred_at, actor_user_id`).
+2. `BillingHandler.Subscribe` and `StartTrial` write a row on every
+   successful state change.
+3. New admin endpoint `GET /api/admin/users/:id/subscription-history`
+   returns the events.
+4. UI on `/admin/users/:id` renders the timeline.
+
+**Logged**: 2026-07-06, end of phase 7.
+
+### DEFER-006 — Auto-bootstrap admin on first boot
+
+**What**: `backend/_tools/bootstrap_admin/main.go` exists as a
+standalone seeder (idempotent: re-runs are no-ops). It is not
+called automatically anywhere. Some deployment flows want the
+admin user to be created on first server boot when `ADMIN_EMAIL`
+is set, so a fresh Render deploy with the env var configured
+doesn't require a separate `go run ./_tools/bootstrap_admin/` step.
+
+**Why deferred**: idempotency makes it safe to call, but a render
+hook adds a side effect to every boot. Running it in `main.go`
+before `r.Run()` would mean the server blocks boot for ~100ms
+on the bcrypt lookup. Some teams prefer this; some prefer an
+explicit deploy step. Out of scope for phase 7's admin UI.
+
+**Acceptance criteria for the future pass**:
+1. In `cmd/api/main.go`, after `db.Init`, check `os.Getenv("ADMIN_EMAIL")`.
+   If set and the user doesn't exist, call the bootstrap logic and
+   log the result.
+2. Keep the standalone `_tools/bootstrap_admin/` working for
+   manual recovery.
+3. Document the auto-bootstrap in `DEPLOY_CONTEXT.md`.
+
+**Logged**: 2026-07-06, end of phase 7.
+

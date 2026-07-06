@@ -1,78 +1,73 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldOff, ShieldAlert } from "lucide-react";
 import { adminApi } from "@/lib/api-client";
+import {
+  COOKIE_IMPERSONATION_TOKEN,
+  readImpersonationTarget,
+  clearImpersonation,
+} from "@/lib/auth-cookie";
 
-type Stored = {
-  token: string;
-  target: { id: number; email: string; name: string };
-  expires_at: number;
-};
-
-const STORAGE_KEY = "dmtool_admin_impersonation";
-
-function readStored(): Stored | null {
-  if (typeof window === "undefined") return null;
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    const v = JSON.parse(raw) as Stored;
-    if (v.expires_at && v.expires_at < Date.now()) {
-      localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
-    return v;
-  } catch {
-    return null;
-  }
-}
+type Target = { id: number; email: string; name: string };
 
 // ImpersonationBanner is rendered on admin pages. It detects the
-// stored impersonation token and surfaces a "you are impersonating X"
-// strip with a Stop button. When the admin stops, the stored token
-// is removed and the admin's own auth cookie resumes carrying the
-// real token on subsequent requests.
+// dmtool_impersonation_token cookie (set when the admin hits
+// "Impersonate" on /admin/users/:id) and surfaces a "you are
+// impersonating X" strip with a Stop button.
+//
+// The check is cookie-based (not localStorage) so:
+//   - the banner is server-renderable and shows on first paint;
+//   - a full-page navigation while impersonating does not cause a
+//     flash of "no banner" before the client mounts;
+//   - the cookie path is consistent with the regular auth token
+//     and the CSRF defense in proxy.ts.
+//
+// When the admin stops, the cookie is cleared and the admin's own
+// dmtool_token cookie resumes carrying the real token on subsequent
+// requests.
 export function ImpersonationBanner() {
   const router = useRouter();
-  const [stored, setStored] = useState<Stored | null>(null);
+  const [target, setTarget] = useState<Target | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [, startTransition] = useTransition();
 
   useEffect(() => {
-    setStored(readStored());
-    // Re-read on focus in case a child page wrote/cleared it.
-    const onFocus = () => setStored(readStored());
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    // Re-read in case a sibling page set or cleared the cookie.
+    setTarget(readImpersonationTarget());
   }, []);
 
-  if (!stored) return null;
+  if (!target) return null;
 
   const stop = async () => {
     setStopping(true);
     try {
-      await adminApi.stopImpersonation(stored.target.id);
+      await adminApi.stopImpersonation(target.id);
     } catch {
-      // Even if the audit-write fails, the client-side swap is the
-      // primary effect; clear local state and let the next request
-      // carry the admin's real token.
+      // Even if the audit-write fails, the client-side cookie clear
+      // is the primary effect; the next request will carry the
+      // admin's real token.
     }
-    localStorage.removeItem(STORAGE_KEY);
-    setStored(null);
+    clearImpersonation();
+    setTarget(null);
     setStopping(false);
-    router.refresh();
+    startTransition(() => router.refresh());
   };
 
   return (
-    <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 flex items-center gap-3">
+    <div
+      data-testid="impersonation-banner"
+      data-impersonation-cookie={COOKIE_IMPERSONATION_TOKEN}
+      className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 flex items-center gap-3"
+    >
       <ShieldAlert className="w-5 h-5 text-amber-700 shrink-0" />
       <div className="flex-1 text-sm">
         <div className="font-semibold text-amber-900">
-          Impersonating {stored.target.name} &lt;{stored.target.email}&gt;
+          Impersonating {target.name} &lt;{target.email}&gt;
         </div>
         <div className="text-amber-800 text-xs mt-0.5">
-          Requests in this tab run as this user. The admin's real
+          Requests in this tab run as this user. The admin&apos;s real
           session is paused; click Stop to return to your own
           session. The token auto-expires in 30 minutes.
         </div>

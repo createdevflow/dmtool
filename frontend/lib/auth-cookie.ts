@@ -13,10 +13,22 @@
 // - SameSite=Lax is the recommended default; we omit Secure in dev
 //   where the cookie would otherwise block http://localhost.
 // - Path=/ keeps it scoped to the app, not /api.
-
 export const COOKIE_TOKEN = "dmtool_token";
 export const COOKIE_USER = "dmtool_user";
 export const COOKIE_MODE = "dmtool_mode";
+
+// Impersonation cookies (phase 7). Distinct names from the regular auth
+// cookie so the admin's own session stays intact while impersonating.
+// The proxy and api-client both prefer the impersonation cookie when
+// present, so the admin's full-page navigations during a support
+// session continue to land on gated routes without bouncing to /login.
+//
+// The dmtool_user cookie (above) intentionally keeps the admin's real
+// identity — it does NOT swap to the impersonated user. The banner
+// reads dmtool_impersonation_target for the "you are impersonating X"
+// display, keeping the two concerns separate.
+export const COOKIE_IMPERSONATION_TOKEN = "dmtool_impersonation_token";
+export const COOKIE_IMPERSONATION_TARGET = "dmtool_impersonation_target";
 
 function cookieOptions(days: number): string {
   const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
@@ -50,6 +62,38 @@ export function setMode(mode: "search" | "social" | "combined"): void {
 export function clearAuth(): void {
   clearAuthCookie(COOKIE_TOKEN);
   clearAuthCookie(COOKIE_USER);
+}
+
+export function setImpersonation(token: string, target: unknown, expiresInMinutes: number): void {
+  // Impersonation TTL matches the server-issued JWT exp. We don't add
+  // slack — the server is the source of truth and 401s will bounce
+  // gracefully when the JWT expires.
+  const days = expiresInMinutes / (24 * 60);
+  setAuthCookie(COOKIE_IMPERSONATION_TOKEN, token, days);
+  setAuthCookie(COOKIE_IMPERSONATION_TARGET, JSON.stringify(target), days);
+}
+
+export function clearImpersonation(): void {
+  clearAuthCookie(COOKIE_IMPERSONATION_TOKEN);
+  clearAuthCookie(COOKIE_IMPERSONATION_TARGET);
+}
+
+export function readImpersonationToken(): string | null {
+  return readCookie(COOKIE_IMPERSONATION_TOKEN);
+}
+
+export function readImpersonationTarget(): { id: number; email: string; name: string } | null {
+  const raw = readCookie(COOKIE_IMPERSONATION_TARGET);
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    if (v && typeof v === "object" && "id" in v && "email" in v && "name" in v) {
+      return v as { id: number; email: string; name: string };
+    }
+  } catch {
+    // fall through
+  }
+  return null;
 }
 
 export function readCookie(name: string): string | null {

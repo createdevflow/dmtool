@@ -115,12 +115,21 @@ export function proxy(request: NextRequest) {
   }
 
   // ----- Auth gate -----------------------------------------------
+  // The gate is satisfied if EITHER the admin's own session token
+  // (dmtool_token) OR an active impersonation token
+  // (dmtool_impersonation_token) is present and JWT-shaped. The
+  // apiClient (see lib/api-client.ts) prefers the impersonation
+  // token when both are set, so the admin's real token keeps the
+  // proxy happy while the impersonation token carries the actual
+  // API calls. We do NOT require both — the admin's real token is
+  // already absent during the normal user flow.
   const protectedPath = PROTECTED_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(p + "/")
   );
   if (
     protectedPath &&
-    !looksLikeJWT(request.cookies.get("dmtool_token")?.value)
+    !looksLikeJWT(request.cookies.get("dmtool_token")?.value) &&
+    !looksLikeJWT(request.cookies.get("dmtool_impersonation_token")?.value)
   ) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";

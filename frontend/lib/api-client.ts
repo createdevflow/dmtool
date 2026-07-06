@@ -1,5 +1,5 @@
 import axios from "axios";
-import { readCookie, COOKIE_TOKEN, clearAuthCookie } from "./auth-cookie";
+import { readCookie, COOKIE_TOKEN, COOKIE_IMPERSONATION_TOKEN, clearAuthCookie } from "./auth-cookie";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
 
@@ -12,30 +12,25 @@ const apiClient = axios.create({
 
 // Request interceptor — attach JWT token to every request.
 //
-// Token priority:
-//   1. Impersonation token in localStorage (admin user-support flow).
-//      The admin stores it under dmtool_admin_impersonation when they
+// Token priority (phase 7):
+//   1. dmtool_impersonation_token cookie (admin user-support flow).
+//      The admin sets this cookie via setImpersonation() when they
 //      hit "Impersonate" on /admin/users/:id. While present, all
 //      requests carry the impersonation token. The banner's "Stop
-//      impersonation" removes the localStorage entry and the cookie
-//      path resumes on the next request.
-//   2. The normal auth cookie (phase 3 source of truth).
+//      impersonation" clears the cookie and the regular dmtool_token
+//      cookie resumes carrying the admin's real token.
+//   2. dmtool_token cookie (phase 3 source of truth).
 //
-// Phase 7 added the impersonation path. The cookie path is unchanged.
+// The proxy at frontend/proxy.ts is configured to accept either
+// cookie as a valid auth shape for gated routes — see that file's
+// auth gate for the matching logic.
 apiClient.interceptors.request.use(
   (config) => {
-    if (typeof window !== "undefined") {
-      const impersonationRaw = localStorage.getItem("dmtool_admin_impersonation");
-      if (impersonationRaw) {
-        try {
-          const v = JSON.parse(impersonationRaw);
-          if (v && v.token) {
-            config.headers.Authorization = `Bearer ${v.token}`;
-            return config;
-          }
-        } catch {
-          // Fall through to cookie path.
-        }
+    if (typeof document !== "undefined") {
+      const impToken = readCookie(COOKIE_IMPERSONATION_TOKEN);
+      if (impToken) {
+        config.headers.Authorization = `Bearer ${impToken}`;
+        return config;
       }
       const token = readCookie(COOKIE_TOKEN);
       if (token) {
@@ -46,7 +41,6 @@ apiClient.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 );
-
 // Response interceptor — handle 401 (token expired) globally.
 // Clears the auth cookie instead of poking localStorage.
 apiClient.interceptors.response.use(

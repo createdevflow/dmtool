@@ -13,11 +13,12 @@ import { toast } from "@/components/ui/toaster";
 import { adminApi, type AdminUserSummary, type AdminAuditEntry, type Subscription } from "@/lib/api-client";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import { ImpersonationBanner } from "@/components/admin/impersonation-banner";
+import { setImpersonation } from "@/lib/auth-cookie";
 
 export default function AdminUserDetailPage() {
-  const router = useRouter();
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
+  const router = useRouter();
 
   const [user, setUser] = useState<AdminUserSummary | null>(null);
   const [sub, setSub] = useState<Subscription | null>(null);
@@ -95,16 +96,15 @@ export default function AdminUserDetailPage() {
       const r = await adminApi.impersonate(id);
       const token = r.data.data.token;
       const target = r.data.data.target;
-      // Persist the impersonation token so the banner + subsequent
-      // requests use it. LocalStorage is fine here because the
-      // banner is a single-tab UI; a real prod setup would use a
-      // secure cookie. Keep this out of the auth cookie path —
-      // cookie swap is the admin's real token.
-      localStorage.setItem("dmtool_admin_impersonation", JSON.stringify({
-        token,
-        target,
-        expires_at: Date.now() + r.data.data.expires_in_minutes * 60 * 1000,
-      }));
+      const expiresInMinutes = r.data.data.expires_in_minutes;
+      // Persist the impersonation token via cookie (NOT localStorage)
+      // so the proxy at frontend/proxy.ts can keep full-page
+      // navigations working during a support session, and the
+      // ImpersonationBanner can render server-side without a
+      // client-mount flash. The cookie path is the same as the
+      // regular auth token — both are non-HttpOnly, SameSite=Lax,
+      // and ride through the CSRF trust list in proxy.ts.
+      setImpersonation(token, target, expiresInMinutes);
       toast(`Impersonating ${target.email}`, "info");
       await refresh();
     } catch (e: unknown) {

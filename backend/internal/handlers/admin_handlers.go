@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -18,6 +19,11 @@ import (
 )
 
 // AdminHandler owns /api/admin/*. It is gated by the RequireRole("admin")
+// planCodeRegex is the single source of truth for plan-code
+// formatting. The frontend form (admin/plans/page.tsx) uses the
+// same regex so the two sides reject the same inputs.
+var planCodeRegex = regexp.MustCompile(`^[a-z][a-z0-9_]{1,40}$`)
+
 // middleware applied in main.go's registerAdminRoutes; if the middleware
 // is bypassed, the handlers still re-check role from the context for
 // defense in depth (see each handler's first action).
@@ -391,6 +397,16 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 	var req adminCreatePlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationError(c, err)
+		return
+	}
+	// Code format: lowercase letters, digits, underscores; must
+	// start with a letter; 2-41 chars. This matches the frontend
+	// form's validation and prevents surprising rows like
+	// "BadCode" or whitespace-only codes from sneaking in via
+	// a hand-rolled API call. Edit doesn't allow code changes so
+	// the same check is unnecessary there.
+	if matched := planCodeRegex.MatchString(req.Code); !matched {
+		utils.BadRequest(c, "Code must be lowercase letters, digits, and underscores, starting with a letter", "INVALID_CODE")
 		return
 	}
 	if existing, _ := h.planRepo.FindByCode(req.Code); existing != nil {

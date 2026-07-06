@@ -20,10 +20,11 @@ const TrialLength = 14 * 24 * time.Hour
 // BillingHandler owns /api/billing/*. Phase 6 ships Stripe as a stub
 // (no real charge) — endpoints mutate the subscription row directly.
 type BillingHandler struct {
-	db          *gorm.DB
-	subRepo     repository.SubscriptionRepository
-	planRepo    repository.PlanRepository
-	projRepo    repository.ProjectRepository
+	db           *gorm.DB
+	userRepo     repository.UserRepository
+	subRepo      repository.SubscriptionRepository
+	planRepo     repository.PlanRepository
+	projRepo     repository.ProjectRepository
 	entitlements *entitlements.Service
 }
 
@@ -31,6 +32,7 @@ type BillingHandler struct {
 // required.
 func NewBillingHandler(
 	db *gorm.DB,
+	userRepo repository.UserRepository,
 	subRepo repository.SubscriptionRepository,
 	planRepo repository.PlanRepository,
 	projRepo repository.ProjectRepository,
@@ -38,6 +40,7 @@ func NewBillingHandler(
 ) *BillingHandler {
 	return &BillingHandler{
 		db:           db,
+		userRepo:     userRepo,
 		subRepo:      subRepo,
 		planRepo:     planRepo,
 		projRepo:     projRepo,
@@ -134,35 +137,32 @@ func (h *BillingHandler) StartTrial(c *gin.Context) {
 		utils.NotFound(c, "Plan not found")
 		return
 	}
+	user, err := h.userRepo.FindByID(uid)
+	if err != nil || user == nil {
+		utils.Unauthorized(c, "Not authenticated")
+		return
+	}
 
-	existing, err := h.subRepo.FindCurrentByUser(uid)
+	// One trial per account, forever. The flag lives on the user record
+	// (not the subscription) so a cancel cannot reset it — the old
+	// status-derived check (rejected on trialing|active-pro) let a user
+	// cycle trial→cancel→trial and pocket a fresh 14-day window each
+	// time. TrialUsedAt is set on the first successful start below and
+	// is never cleared.
+	if user.TrialUsedAt != nil {
+		utils.Conflict(c, "This account has already used its trial", "TRIAL_ALREADY_USED")
+		return
+	}
 
+	existing, err := h.subRepo.FindLatestByUser(uid)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		utils.InternalError(c, "Failed to load subscription")
 		return
 	}
 
-	// A user is allowed exactly one trial ever. The auto-free row
-	// written on registration is NOT a trial — it's the default. We
-	// reject only when the existing row is already a real subscription
-	// (trialing or active on a pro plan), since re-activating a trial
-	// after it's been spent is the abuse case to prevent.
-	if existing != nil {
-		isProPlan := existing.PlanCode == models.PlanCodeProMonthly ||
-			existing.PlanCode == models.PlanCodeProYearly
-		alreadyTrialing := existing.Status == models.SubscriptionStatusTrialing
-		alreadyActivePro := isProPlan && existing.Status == models.SubscriptionStatusActive
-		if alreadyTrialing || alreadyActivePro {
-			utils.Conflict(c, "A subscription already exists for this user", "TRIAL_ALREADY_USED")
-			return
-		}
-	}
-
 	now := time.Now()
 	trialEnd := now.Add(TrialLength)
 
-	// Two paths: brand-new user (no row) → Create; existing free row →
-	// upgrade it in place so we don't end up with two rows for one user.
 	if existing == nil {
 		sub := &models.Subscription{
 			UserID:      uid,
@@ -176,25 +176,39 @@ func (h *BillingHandler) StartTrial(c *gin.Context) {
 			utils.InternalError(c, "Failed to start trial")
 			return
 		}
-		utils.Created(c, sub)
-		return
+	} else {
+		// Upgrade the existing row (typically the auto-free sub written
+		// on register) in place. The Subscription is the source of
+		// truth for entitlements; TrialUsedAt is the source of truth
+		// for trial eligibility.
+		if err := h.db.Model(&models.Subscription{}).
+			Where("user_id = ?", uid).
+			Order("starts_at DESC, id DESC").
+			Limit(1).
+			Updates(map[string]any{
+				"plan_code":     plan.Code,
+				"status":        models.SubscriptionStatusTrialing,
+				"trial_ends_at": trialEnd,
+			}).Error; err != nil {
+			log.Printf("[billing] failed to upgrade free sub to trial for user %d: %v", uid, err)
+			utils.InternalError(c, "Failed to start trial")
+			return
+		}
 	}
 
-	// Upgrade the free row to a trialing pro row in one shot.
-	if err := h.db.Model(&models.Subscription{}).
-		Where("user_id = ?", uid).
-		Order("starts_at DESC").
-		Limit(1).
-		Updates(map[string]any{
-			"plan_code":     plan.Code,
-			"status":        models.SubscriptionStatusTrialing,
-			"trial_ends_at": trialEnd,
-		}).Error; err != nil {
-		log.Printf("[billing] failed to upgrade free sub to trial for user %d: %v", uid, err)
-		utils.InternalError(c, "Failed to start trial")
-		return
+	// Persist the trial-used flag. Done AFTER the subscription change
+	// so a partial failure leaves the user retryable rather than
+	// silently consumed.
+	if err := h.db.Model(&models.User{}).
+		Where("id = ?", uid).
+		Update("trial_used_at", now).Error; err != nil {
+		log.Printf("[billing] WARN: trial sub created but trial_used_at update failed for user %d: %v", uid, err)
+		// Don't fail the request — the trial sub is in place. The
+		// worst case is a user can re-try the trial once after this
+		// race; the next attempt will see TrialUsedAt set and reject.
 	}
-	updated, err := h.subRepo.FindCurrentByUser(uid)
+
+	updated, err := h.subRepo.FindLatestByUser(uid)
 	if err != nil {
 		utils.InternalError(c, "Failed to load subscription")
 		return

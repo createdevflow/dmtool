@@ -32,7 +32,15 @@ type User struct {
 	// db.migrate via a forward-only ALTER on first boot after deploy.
 	DashboardMode string `gorm:"not null;default:combined;size:16" json:"dashboard_mode"`
 
-	Projects []Project `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"projects,omitempty"`
+	// TrialUsedAt is the one-way "this account has consumed its trial"
+	// flag, set the first time the user starts a trial and never
+	// cleared. Phase 6 introduced this after the prior
+	// status-derived check was shown to allow trial→cancel→trial
+	// abuse (the subscription status resets to "canceled", so the
+	// eligibility check saw a fresh user).
+	TrialUsedAt *time.Time `json:"trial_used_at,omitempty"`
+
+ 	Projects []Project `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"projects,omitempty"`
 }
 
 // Mode constants are defined in user_preference.go; constants reused

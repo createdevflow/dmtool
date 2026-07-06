@@ -19,6 +19,7 @@ import (
 	"backend/internal/db"
 	"backend/internal/handlers"
 	"backend/internal/middleware"
+	"backend/internal/models"
 	"backend/internal/repository"
 	"backend/internal/services"
 	"backend/internal/services/entitlements"
@@ -53,6 +54,7 @@ func main() {
 	taskRepo := repository.NewTaskRepository(database)
 	subscriptionRepo := repository.NewSubscriptionRepository(database)
 	planRepo := repository.NewPlanRepository(database)
+	auditRepo := repository.NewAdminAuditLogRepository(database)
 	prefRepo := repository.NewUserPreferenceRepository(database)
 
 	entitlementsSvc := entitlements.New(database, subscriptionRepo, planRepo, projectRepo)
@@ -175,7 +177,7 @@ func main() {
 	registerSystemRoutes(api, projectRepo, taskRepo, cfg)
 	registerIntegrationRoutes(api, projectRepo, oauthRepo, gscOAuthConfig, metaOAuthConfig, linkedinOAuthConfig, encKey, cfg)
 	registerBillingRoutes(api, database, userRepo, subscriptionRepo, planRepo, projectRepo, entitlementsSvc)
-	// it on the root router before the JWT-protected group.
+	registerAdminRoutes(api, database, userRepo, subscriptionRepo, planRepo, auditRepo, projectRepo, privateKey)
 	r.POST("/api/billing/webhook", handlers.NewBillingHandler(database, userRepo, subscriptionRepo, planRepo, projectRepo, entitlementsSvc).Webhook)
 	// User preferences (phase 3): read/update dashboard_mode.
 	prefsHandler := handlers.NewPreferencesHandler(prefRepo)
@@ -266,6 +268,33 @@ func registerBillingRoutes(g *gin.RouterGroup, db *gorm.DB,
 	g.POST("/billing/cancel", h.Cancel)
 }
 
+// registerAdminRoutes wires /api/admin/* under JWT + RequireRole("admin").
+// The admin group sits inside the same /api prefix as the other routes;
+// the RequireRole middleware applied here is what gates it.
+func registerAdminRoutes(g *gin.RouterGroup, db *gorm.DB,
+	userRepo repository.UserRepository,
+	subRepo repository.SubscriptionRepository,
+	planRepo repository.PlanRepository,
+	auditRepo repository.AdminAuditLogRepository,
+	projRepo repository.ProjectRepository,
+	privKey *rsa.PrivateKey) {
+	h := handlers.NewAdminHandler(db, userRepo, subRepo, planRepo, auditRepo, projRepo, privKey)
+	admin := g.Group("/admin")
+	admin.Use(middleware.RequireRole(models.RoleAdmin))
+	{
+		admin.GET("/users", h.ListUsers)
+		admin.GET("/users/:id", h.GetUser)
+		admin.PATCH("/users/:id", h.UpdateUser)
+		admin.POST("/users/:id/reset-password", h.ResetPassword)
+		admin.POST("/users/:id/impersonate", h.ImpersonateUser)
+		admin.POST("/users/:id/stop-impersonation", h.StopImpersonation)
+		admin.GET("/plans", h.ListPlans)
+		admin.POST("/plans", h.CreatePlan)
+		admin.PATCH("/plans/:id", h.UpdatePlan)
+		admin.GET("/audit-log", h.ListAuditLog)
+		admin.GET("/stats", h.Stats)
+	}
+}
 func registerProjectRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, database *gorm.DB, encKey []byte,
 	metricRepo repository.MetricRepository, oauthRepo repository.OAuthRepository, seoRepo repository.SEORepository,
 	dataForSEOSvc services.DataForSEOService, rapidAPISvc services.RapidAPIService, crawler services.SEOCrawlerService,

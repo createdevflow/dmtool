@@ -10,11 +10,33 @@ const apiClient = axios.create({
   },
 });
 
-// Request interceptor — attach JWT token (from cookie) to every request.
-// Phase 3 source-of-truth is the cookie so the proxy can gate too.
+// Request interceptor — attach JWT token to every request.
+//
+// Token priority:
+//   1. Impersonation token in localStorage (admin user-support flow).
+//      The admin stores it under dmtool_admin_impersonation when they
+//      hit "Impersonate" on /admin/users/:id. While present, all
+//      requests carry the impersonation token. The banner's "Stop
+//      impersonation" removes the localStorage entry and the cookie
+//      path resumes on the next request.
+//   2. The normal auth cookie (phase 3 source of truth).
+//
+// Phase 7 added the impersonation path. The cookie path is unchanged.
 apiClient.interceptors.request.use(
   (config) => {
     if (typeof window !== "undefined") {
+      const impersonationRaw = localStorage.getItem("dmtool_admin_impersonation");
+      if (impersonationRaw) {
+        try {
+          const v = JSON.parse(impersonationRaw);
+          if (v && v.token) {
+            config.headers.Authorization = `Bearer ${v.token}`;
+            return config;
+          }
+        } catch {
+          // Fall through to cookie path.
+        }
+      }
       const token = readCookie(COOKIE_TOKEN);
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
@@ -244,6 +266,94 @@ export const billingApi = {
 
 export const plansApi = {
   list: () => axios.get<{ data: Plan[] }>(`${API_BASE}/plans`),
+};
+
+// ── Admin API ──────────────────────────────────────────────────────────────
+// Phase 7. Gated by RequireRole('admin') on the backend — the routes
+// return 403 to non-admins and to admins using an impersonation token.
+export type AdminUserSummary = {
+  id: number;
+  email: string;
+  name: string;
+  role: string;
+  plan_code: string;
+  sub_status: string;
+  created_at: string;
+  trial_used_at?: string | null;
+  last_login_at?: string | null;
+};
+
+export type AdminPlan = {
+  id: number;
+  code: string;
+  name: string;
+  description: string;
+  tier_rank: number;
+  monthly_cents: number;
+  yearly_cents: number;
+  currency: string;
+  max_sites: number;
+  is_active: boolean;
+};
+
+export type AdminAuditEntry = {
+  id: number;
+  created_at: string;
+  actor_user_id: number;
+  target_user_id: number;
+  action: string;
+  metadata: Record<string, unknown> | null;
+};
+
+export type AdminStats = {
+  total_users: number;
+  new_users_7d: number;
+  new_users_30d: number;
+  active_subs: number;
+  trialing_subs: number;
+  canceled_subs: number;
+  mrr_cents: number;
+  arr_proxy_cents: number;
+  plan_breakdown: Record<string, number>;
+  user_growth_30d: Array<{ date: string; count: number }>;
+  recent_activity: AdminAuditEntry[];
+};
+
+export const adminApi = {
+  listUsers: (params: { page?: number; size?: number; search?: string; plan?: string } = {}) =>
+    apiClient.get<{
+      data: { users: AdminUserSummary[]; total: number; page: number; size: number };
+    }>("/admin/users", { params }),
+  getUser: (id: number) =>
+    apiClient.get<{
+      data: {
+        user: AdminUserSummary;
+        subscription: Subscription | null;
+        audit_log: AdminAuditEntry[];
+      };
+    }>(`/admin/users/${id}`),
+  updateUser: (id: number, body: { name?: string; email?: string; role?: string }) =>
+    apiClient.patch<{ data: AdminUserSummary }>(`/admin/users/${id}`, body),
+  resetPassword: (id: number) =>
+    apiClient.post<{
+      data: { user_id: number; temporary_password: string; message: string };
+    }>(`/admin/users/${id}/reset-password`),
+  impersonate: (id: number) =>
+    apiClient.post<{
+      data: { token: string; target: { id: number; email: string; name: string }; expires_in_minutes: number };
+    }>(`/admin/users/${id}/impersonate`),
+  stopImpersonation: (id: number) =>
+    apiClient.post<{ data: { message: string } }>(`/admin/users/${id}/stop-impersonation`, { target_id: id }),
+  listPlans: () => apiClient.get<{ data: AdminPlan[] }>("/admin/plans"),
+  createPlan: (body: Partial<AdminPlan>) =>
+    apiClient.post<{ data: AdminPlan }>("/admin/plans", body),
+  updatePlan: (id: number, body: Partial<AdminPlan>) =>
+    apiClient.patch<{ data: AdminPlan }>(`/admin/plans/${id}`, body),
+  listAuditLog: (params: { page?: number; size?: number; actor_id?: number; target_id?: number; action?: string } = {}) =>
+    apiClient.get<{
+      data: { entries: AdminAuditEntry[]; total: number; page: number; size: number };
+    }>("/admin/audit-log", { params }),
+  stats: () => apiClient.get<{ data: AdminStats }>("/admin/stats"),
 };
 
 export default apiClient;

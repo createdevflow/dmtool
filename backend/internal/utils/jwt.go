@@ -16,10 +16,23 @@ type JWTClaims struct {
 	UserID uint   `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
+	// ImpersonatorID is set on tokens issued by the admin impersonation
+	// flow. When non-zero, the request is being made on behalf of
+	// UserID by the admin whose ID is ImpersonatorID. Admin routes
+	// reject these tokens (RequireRole middleware) to prevent the
+	// admin from extending their own session into other users' admin
+	// context.
+	ImpersonatorID uint `json:"impersonator_id,omitempty"`
+	// IsImpersonation is a redundant boolean set on impersonation
+	// tokens so the middleware can reject without having to compare
+	// ImpersonatorID against UserID on every request.
+	IsImpersonation bool `json:"is_impersonation,omitempty"`
 	jwt.RegisteredClaims
 }
 
 // GenerateAccessToken creates a signed RS256 JWT with a 15-minute TTL.
+// This is the normal (non-impersonation) issuance path. For the
+// impersonation variant use GenerateImpersonationToken.
 func GenerateAccessToken(privateKey *rsa.PrivateKey, userID uint, email, role string) (string, error) {
 	claims := JWTClaims{
 		UserID: userID,
@@ -31,7 +44,29 @@ func GenerateAccessToken(privateKey *rsa.PrivateKey, userID uint, email, role st
 			Issuer:    "dmtool",
 		},
 	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	return token.SignedString(privateKey)
+}
 
+// GenerateImpersonationToken issues a short-lived (30-minute) token
+// for the admin-to-user impersonation flow. The token is clearly
+// distinguished from a normal access token by IsImpersonation=true
+// and ImpersonatorID set to the admin's user ID. The user's own
+// role is preserved (so the impersonated user can still hit their
+// own routes) but the admin's ID is recoverable for audit logging.
+func GenerateImpersonationToken(privateKey *rsa.PrivateKey, adminID, targetUserID uint, targetEmail, targetRole string) (string, error) {
+	claims := JWTClaims{
+		UserID:          targetUserID,
+		Email:           targetEmail,
+		Role:            targetRole,
+		ImpersonatorID:  adminID,
+		IsImpersonation: true,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "dmtool-impersonation",
+		},
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	return token.SignedString(privateKey)
 }
@@ -97,5 +132,3 @@ SMtikEgw34dvVSW28yUVbpfdScRHLae2y51w+WGK1131d7kEYgh/8zVfSEWVMOY4
 k8zaJIDaG5OFfsvTsPZSnYkbpYHYHWavc3P6IWyxBn4M9nxsj9z2PGPygJLa3W74
 2QIDAQAB
 -----END PUBLIC KEY-----`
-
-

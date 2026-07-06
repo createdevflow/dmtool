@@ -446,3 +446,40 @@ production URL(s). Both sides must agree, or browser CORS will fail.
 `internal/config/config.go` (used by `middleware.CORS`).
 
 **Logged**: 2026-07-03, end of phase 3.
+
+### DEFER-003 — Overview tab in per-mode overview is mildly redundant
+
+**What**: The per-mode overview pages
+(`app/(dashboard)/dashboard/[mode]/page.tsx`) have an "Overview"
+tab that links to `/dashboard`. The proxy at `frontend/proxy.ts`
+rewrites `/dashboard` → `/dashboard/<mode>`, so the user lands on
+the same per-mode overview they were just on. Visually they
+navigate (URL changes, tab bar updates), but the content is
+identical.
+
+**Why deferred**: the real fix — duplicating the existing
+`app/(dashboard)/dashboard/page.tsx` (~389 lines of project-aware
+dashboard content) into the per-mode overview so that the
+"Overview" tab actually surfaces mode-specific summary — is a real
+refactor. The 389 lines of the existing dashboard pull metrics,
+insights, tasks, snapshot, charts, action center items, and AI
+insight cards. None of that is mode-aware today. Adding the mode
+filter at the data layer (separate metrics for SEO vs Social) is
+its own design decision that should be a separate plan item.
+
+**Current behavior confirmed**: click → 200 OK → page renders
+identical content. Not a dead link, not an error state. Just
+redundant navigation the proxy introduces as a side effect of the
+mode-rewrite rule.
+
+**Acceptance criteria for the future pass**:
+1. The "Overview" tab on per-mode overviews renders content that
+   actually differs by mode (e.g. SEO summary for search, Social
+   summary for social, both for combined).
+2. The duplication of dashboard data into mode-specific pages is
+   done via a shared component, not copy-paste.
+3. The metrics endpoint (or a new mode-aware endpoint) returns the
+   right data for the active mode.
+
+**Logged**: 2026-07-03, end of phase 5.
+

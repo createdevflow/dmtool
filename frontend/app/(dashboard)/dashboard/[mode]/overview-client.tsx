@@ -13,7 +13,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ChevronRight, AlertCircle, Loader2 } from "lucide-react";
 
 interface ModeOverviewClientProps {
@@ -26,8 +25,10 @@ interface ProjectSummary {
   goal: string;
 }
 
-// Tab definitions per mode. The same `href` is used by both the tab
-// and the fallback "open full page" link on each card.
+// Tab definitions per mode. Each tab routes to a real page (already
+// present in the codebase) and appears in SectionTabs above the
+// overview cards. The same `href` is reused in the per-card Open
+// link at the bottom of each card.
 const SEARCH_TABS: SectionTab[] = [
   { label: "Overview", href: "/dashboard" },
   { label: "Site Explorer", href: "/seo/site-explorer" },
@@ -40,6 +41,7 @@ const SEARCH_TABS: SectionTab[] = [
 ];
 
 const SOCIAL_TABS: SectionTab[] = [
+  { label: "Overview", href: "/dashboard" },
   { label: "Profile Analyzer", href: "/social/profile-analyzer" },
   { label: "Content Analytics", href: "/social/insights" },
   { label: "Growth Tracking", href: "/social/growth" },
@@ -155,8 +157,6 @@ export function ModeOverviewClient({ mode }: ModeOverviewClientProps) {
 
   const activeHref = useMemo(() => {
     if (!activeProject) return null;
-    // Append project id as query string so the destination page can
-    // surface a deterministic project without re-reading localStorage.
     return (href: string) =>
       activeProject ? `${href}?project_id=${activeProject.id}` : href;
   }, [activeProject]);
@@ -234,6 +234,7 @@ function TabCard({ tab, activeProject, activeHref }: TabCardProps) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex items-center justify-between pt-0">
+        <span className="text-xs text-slate-400">Click to open</span>
         <Link
           href={href}
           prefetch

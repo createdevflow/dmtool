@@ -13,6 +13,12 @@ type SubscriptionRepository interface {
 	Create(sub *models.Subscription) error
 	FindCurrentByUser(userID uint) (*models.Subscription, error)
 	UpdatePlanAndStatus(userID uint, planCode, status string) error
+	// FindLatestByUser returns the user's most recently-started subscription
+	// row regardless of status. Used by the billing endpoints when the
+	// status filter on FindCurrentByUser (active|trialing) would hide a
+	// just-canceled row.
+	FindLatestByUser(userID uint) (*models.Subscription, error)
+
 }
 
 type gormSubscriptionRepository struct {
@@ -58,4 +64,19 @@ func (r *gormSubscriptionRepository) UpdatePlanAndStatus(userID uint, planCode, 
 			"plan_code": planCode,
 			"status":    status,
 		}).Error
+}
+
+// FindLatestByUser returns the user's most recently-started subscription
+// row regardless of status. Used by the billing endpoints when the
+// status filter on FindCurrentByUser (active|trialing) would hide a
+// just-canceled row.
+func (r *gormSubscriptionRepository) FindLatestByUser(userID uint) (*models.Subscription, error) {
+	var sub models.Subscription
+	err := r.db.Where("user_id = ?", userID).
+		Order("starts_at DESC, id DESC").
+		First(&sub).Error
+	if err != nil {
+		return nil, err
+	}
+	return &sub, nil
 }

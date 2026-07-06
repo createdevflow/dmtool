@@ -198,5 +198,52 @@ export const publicApi = {
   seoAudit: (url: string) =>
     axios.get(`${API_BASE.replace("/api", "")}/api/public/seo-audit?url=${encodeURIComponent(url)}`),
 };
+// ── Billing API ──────────────────────────────────────────────────────────────
+// Phase 6. The Subscribe and StartTrial endpoints are stub-Stripe (no
+// real charge) until billing/webhook is implemented; the trial endpoint
+// starts a 14-day trialing row on a pro plan.
+export type Plan = {
+  id: number;
+  code: string;
+  name: string;
+  description: string;
+  tier_rank: number;
+  monthly_cents: number;
+  yearly_cents: number;
+  currency: string;
+  max_sites: number;
+  is_active: boolean;
+};
+
+export type Subscription = {
+  id: number;
+  user_id: number;
+  plan_code: string;
+  status: "active" | "trialing" | "past_due" | "canceled";
+  trial_ends_at: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  canceled_at: string | null;
+  stripe_sub_id: string;
+};
+
+export type BillingState = {
+  subscription: Subscription | null;
+  plan: Plan;
+  usage: { seo_projects: number; max_sites: number };
+};
+
+export const billingApi = {
+  me: () => apiClient.get<{ data: BillingState }>("/billing/me"),
+  startTrial: (planCode: "pro_monthly" | "pro_yearly") =>
+    apiClient.post<{ data: Subscription }>("/billing/trial", { plan_code: planCode }),
+  subscribe: (planCode: "pro_monthly" | "pro_yearly") =>
+    apiClient.post<{ data: Subscription }>("/billing/subscribe", { plan_code: planCode }),
+  cancel: () => apiClient.post<{ data: Subscription }>("/billing/cancel"),
+};
+
+export const plansApi = {
+  list: () => axios.get<{ data: Plan[] }>(`${API_BASE}/plans`),
+};
 
 export default apiClient;

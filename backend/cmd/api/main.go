@@ -174,7 +174,10 @@ func main() {
 	registerTaskRoutes(api, insightRepo)
 	registerSystemRoutes(api, projectRepo, taskRepo, cfg)
 	registerIntegrationRoutes(api, projectRepo, oauthRepo, gscOAuthConfig, metaOAuthConfig, linkedinOAuthConfig, encKey, cfg)
-
+	// Stripe webhook MUST be public — Stripe can't carry our JWT. Register
+	// it on the root router before the JWT-protected group.
+	r.POST("/api/billing/webhook", handlers.NewBillingHandler(database, subscriptionRepo, planRepo, projectRepo, entitlementsSvc).Webhook)
+ 	registerBillingRoutes(api, database, subscriptionRepo, planRepo, projectRepo, entitlementsSvc)
 	// User preferences (phase 3): read/update dashboard_mode.
 	prefsHandler := handlers.NewPreferencesHandler(prefRepo)
 	api.GET("/users/me/preferences", prefsHandler.Get)
@@ -251,6 +254,18 @@ func registerAuthRoutes(g *gin.RouterGroup, _ *gorm.DB,
 	g.POST("/logout", h.Logout)
 	g.GET("/me", middleware.JWTAuth(pubKey), h.Me)
 	g.PATCH("/me", middleware.JWTAuth(pubKey), h.UpdateMe)
+}
+// registerBillingRoutes wires /api/billing/* under the JWT-protected api group.
+func registerBillingRoutes(g *gin.RouterGroup, db *gorm.DB,
+	subRepo repository.SubscriptionRepository,
+	planRepo repository.PlanRepository,
+	projRepo repository.ProjectRepository,
+	ent *entitlements.Service) {
+	h := handlers.NewBillingHandler(db, subRepo, planRepo, projRepo, ent)
+	g.GET("/billing/me", h.Me)
+	g.POST("/billing/trial", h.StartTrial)
+	g.POST("/billing/subscribe", h.Subscribe)
+	g.POST("/billing/cancel", h.Cancel)
 }
 
 func registerProjectRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, database *gorm.DB, encKey []byte,

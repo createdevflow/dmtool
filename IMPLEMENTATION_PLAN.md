@@ -562,3 +562,67 @@ explicit deploy step. Out of scope for phase 7's admin UI.
 
 **Logged**: 2026-07-06, end of phase 7.
 
+
+
+### DEFER-007 — Subscription row accumulation / data hygiene
+
+**What**: A user who went trialing-canceling-subscribing-canceling-resubscribing
+accumulates several subscription rows over time
+(the `subscriptions` table has no unique constraint or
+cleanup, so all transitions create new rows). The dashboard's
+revenue math (`AdminHandler.Stats`) already filters the sums to
+`status='active'` rows so the cents number is correct, but the
+table itself grows forever with no cleanup. Each trial/cancel/
+sub cycle produces a new row; the old rows are kept for audit
+but nothing prunes them.
+
+**Why deferred (acceptable for now)**: The stub-Stripe phase
+treats the `subscriptions` table as the audit log for plan
+transitions, and the dashboard math (post-phase-9 fix) handles
+that correctly. Real Stripe integration would replace the
+in-place trial/subscribe path with a webhook that updates
+subscription status idempotently, at which point accumulating
+rows is no longer a thing — the row's `stripe_sub_id`
+identifies a real Stripe subscription. Until then, the table
+grows; we should plan to either (a) garbage-collect `canceled`
+rows older than N days, or (b) introduce a `subscription_events`
+history table.
+
+**Affected surfaces**:
+- `subscriptions` table — no unique constraint; free to accumulate.
+- `BillingHandler.Subscribe` — when a user already has `canceled`
+  rows, it inserts a *new* active row alongside the canceled
+  ones (`UpdatePlanAndStatus` reaches active/trialing rows but
+  doesn't touch canceled, by design).
+  See `TestSubscribe_CanceledRowIsNotReused_NewRowCreated`.
+- `BillingHandler.Cancel` — sets status=canceled on the most
+  recent row only.
+- The dashboard view is already correct (test:
+  `TestAdminStatsMRR_HandlesOrphanedRows` pins the math).
+
+**Acceptance criteria for the future pass**:
+1. Audit the real-world write patterns to confirm whether
+   pre-Stripe the API surface can still produce more than one
+   active row per user. The phase-9 fix closes the only currently
+   reachable visualisation bug (PlanBreakdown over-counting);
+   the DB-level hygiene is still open.
+2. Add a `subscription_events` table (DEFER-005 refactor) OR a
+   periodic cleanup of `canceled` rows older than 90 days
+   (matching typical Stripe billing-cycle timing). Pick one
+   based on whether we want to retain long-term audit or accept
+   only recent activity.
+3. If we keep both `subscriptions` AND `subscription_events`,
+   give them a clear delineation: events is the immutable
+   ledger, subscriptions is the current-state cache.
+4. If the cleanup route is chosen, ensure it does NOT run on
+   every backend boot (it would be too easy to accidentally
+   delete audit data). Either run as a one-shot `_tools/` task,
+   or guard with an env flag like `ADMIN_PRUNE_SUBSCRIPTIONS=1`.
+5. Re-run `TestAdminStatsMRR_HandlesOrphanedRows` against
+   production-shape data after the fix lands.
+
+**Logged**: 2026-07-07, end of phase 9. Triggered by the
+revenue-math hardening (plan create/edit UI closeout): the
+PlanBreakdown query had been over-counting canceled rows;
+fixing it exposed the underlying accumulation as a separate
+hygiene concern worth tracking separately.

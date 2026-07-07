@@ -592,11 +592,25 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 		Group("status").
 		Scan(&statusRows)
 	planCounts := map[string]int64{}
+	// Per-plan counts ONLY over rows that represent a current
+	// entitlement (active or trialing). Counting canceled rows
+	// here would be misleading: a user who trialed, canceled,
+	// subscribed, canceled, and resubscribed has 5 plan_code rows
+	// on disk but contributes ONE active plan. With the filter
+	// below, the per-plan number matches the active entitlement
+	// count exactly. The corresponding revenue math (sum over
+	// status='active') is in the MRR block further down; the two
+	// are now consistent. See TestAdminStatsMRR_HandlesOrphanedRows
+	// for the regression.
 	var planRows []struct {
 		PlanCode string
 		Count    int64
 	}
 	h.db.Model(&models.Subscription{}).
+		Where("status IN ?", []string{
+			models.SubscriptionStatusActive,
+			models.SubscriptionStatusTrialing,
+		}).
 		Select("plan_code, count(*) as count").
 		Group("plan_code").
 		Scan(&planRows)

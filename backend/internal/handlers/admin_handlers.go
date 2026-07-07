@@ -482,6 +482,23 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 	if req.IsActive != nil {
 		updates["is_active"] = *req.IsActive
 	}
+	// Server-side validation. The PlanModal form validates client-side
+	// too, but admins (or anyone with admin tokens and a hand-rolled
+	// request) can bypass the UI. Mirror the form checks here so a
+	// direct API call can't sneak in a negative price or a zero-site
+	// row that the entitlements/billing code would later trip on.
+	if v, ok := updates["monthly_cents"].(int); ok && v < 0 {
+		utils.BadRequest(c, "monthly_cents must be non-negative", "INVALID_PRICE")
+		return
+	}
+	if v, ok := updates["yearly_cents"].(int); ok && v < 0 {
+		utils.BadRequest(c, "yearly_cents must be non-negative", "INVALID_PRICE")
+		return
+	}
+	if v, ok := updates["max_sites"].(int); ok && v < 1 {
+		utils.BadRequest(c, "max_sites must be at least 1", "INVALID_MAX_SITES")
+		return
+	}
 	if len(updates) == 0 {
 		utils.BadRequest(c, "No fields to update", "EMPTY_UPDATE")
 		return

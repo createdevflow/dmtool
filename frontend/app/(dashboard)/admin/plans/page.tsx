@@ -65,8 +65,12 @@ function fromPlan(p: AdminPlan): PlanFormValues {
 //
 // The plan's row id is passed as a sibling prop (planId) — not
 // smuggled through the form values — so the form values describe
-// the plan's editable content, not its identity.
-function PlanModal({
+// "the plan's editable content, not its identity.
+//
+// Exported so the phase 9 smoke test (page.test.tsx) can mount it
+// in isolation. The export is harmless in production — Next.js only
+// mounts the default-exported AdminPlansPage.
+export function PlanModal({
   mode,
   planId,
   initial,

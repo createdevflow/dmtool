@@ -48,3 +48,43 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #d0d0d0;
 }
+
+
+/* Phase 8 — Radix Dialog/Sheet/Tooltip data-state animations.
+   Plain CSS keyframes keyed off [data-state=open/closed]; keeps the
+   dep list tight (no tailwindcss-animate). */
+@keyframes overlay-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes overlay-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes modal-in    {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes modal-out   {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+}
+@keyframes sheet-right-in  { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes sheet-right-out { from { transform: translateX(0); }    to { transform: translateX(100%); } }
+@keyframes sheet-left-in   { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes sheet-left-out  { from { transform: translateX(0); }    to { transform: translateX(-100%); } }
+@keyframes sheet-top-in    { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+@keyframes sheet-top-out   { from { transform: translateY(0); }    to { transform: translateY(-100%); } }
+@keyframes sheet-bottom-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes sheet-bottom-out{ from { transform: translateY(0); }    to { transform: translateY(100%); } }
+@keyframes tooltip-in  { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+@keyframes tooltip-out { from { opacity: 1; transform: scale(1); }    to { opacity: 0; transform: scale(0.95); } }
+
+.animate-overlay-in       { animation: overlay-in 120ms ease-out; }
+.animate-overlay-out      { animation: overlay-out 100ms ease-in; }
+.animate-modal-in         { animation: modal-in 160ms cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-modal-out        { animation: modal-out 100ms ease-in; }
+.animate-sheet-right-in   { animation: sheet-right-in 220ms cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-sheet-right-out  { animation: sheet-right-out 160ms ease-in; }
+.animate-sheet-left-in    { animation: sheet-left-in 220ms cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-sheet-left-out   { animation: sheet-left-out 160ms ease-in; }
+.animate-sheet-top-in     { animation: sheet-top-in 220ms cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-sheet-top-out    { animation: sheet-top-out 160ms ease-in; }
+.animate-sheet-bottom-in  { animation: sheet-bottom-in 220ms cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-sheet-bottom-out { animation: sheet-bottom-out 160ms ease-in; }
+.animate-tooltip-in       { animation: tooltip-in 120ms ease-out; }
+.animate-tooltip-out      { animation: tooltip-out 80ms ease-in; }

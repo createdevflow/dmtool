@@ -266,6 +266,11 @@ func registerBillingRoutes(g *gin.RouterGroup, db *gorm.DB,
 	g.POST("/billing/trial", h.StartTrial)
 	g.POST("/billing/subscribe", h.Subscribe)
 	g.POST("/billing/cancel", h.Cancel)
+	// GET /billing/me returns the resolved billing state for the
+	// authenticated user (subscription + plan + usage). Phase 6 wired
+	// the handler; phase 8 wires the route so the Topbar plan badge
+	// can display the real plan name instead of hard-coded "Pro".
+	g.GET("/billing/me", h.Me)
 }
 
 // registerAdminRoutes wires /api/admin/* under JWT + RequireRole("admin").

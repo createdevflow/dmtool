@@ -1,7 +1,10 @@
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { CommandMenu } from "@/components/dashboard/command-menu";
+import { MobileSidebar } from "@/components/dashboard/mobile-sidebar";
+import { SidebarDrawerProvider } from "@/components/dashboard/sidebar-drawer-context";
 import { Toaster } from "@/components/ui/toaster";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { DashboardModeProvider } from "@/components/dashboard/dashboard-mode-context";
 
 export default function DashboardLayout({
@@ -11,18 +14,23 @@ export default function DashboardLayout({
 }) {
   return (
     <DashboardModeProvider>
-      <div className="h-full bg-background min-h-screen font-sans">
-        <Sidebar />
-        <div className="lg:pl-64 flex flex-col min-h-screen">
-          <Topbar />
+      <SidebarDrawerProvider>
+        <TooltipProvider delayDuration={150}>
+          <div className="h-full bg-background min-h-screen font-sans">
+            <Sidebar />
+            <div className="lg:pl-64 flex flex-col min-h-screen">
+              <Topbar />
 
-          <main className="flex-1 p-6 lg:p-8 max-w-7xl w-full mx-auto relative">
-            <CommandMenu />
-            <Toaster />
-            {children}
-          </main>
-        </div>
-      </div>
+              <main className="flex-1 p-6 lg:p-8 max-w-7xl w-full mx-auto relative">
+                <CommandMenu />
+                <MobileSidebar />
+                <Toaster />
+                {children}
+              </main>
+            </div>
+          </div>
+        </TooltipProvider>
+      </SidebarDrawerProvider>
     </DashboardModeProvider>
   );
 }

@@ -9,6 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toaster";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { adminApi, type AdminPlan } from "@/lib/api-client";
 
 // Form values for both create + edit. Edit pre-fills from the row;
@@ -136,20 +143,22 @@ function PlanModal({
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={isEdit ? "Edit plan" : "Create plan"}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
+    <Dialog
+      open
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
     >
-      <div
-        className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
+      <DialogContent
+        aria-label={isEdit ? "Edit plan" : "Create plan"}
+        maxWidthClass="max-w-lg"
+        hideClose
       >
-        <h2 className="text-lg font-semibold text-slate-900 mb-4">
-          {isEdit ? `Edit plan: ${initial.code}` : "Create plan"}
-        </h2>
+        <DialogHeader>
+          <DialogTitle>
+            {isEdit ? `Edit plan: ${initial.code}` : "Create plan"}
+          </DialogTitle>
+        </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
           <div>
             <Label htmlFor="plan-code">Code</Label>
@@ -247,7 +256,7 @@ function PlanModal({
               Active
             </label>
           )}
-          <div className="flex justify-end gap-2 pt-2">
+          <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
@@ -255,10 +264,10 @@ function PlanModal({
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               {isEdit ? "Save" : "Create"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

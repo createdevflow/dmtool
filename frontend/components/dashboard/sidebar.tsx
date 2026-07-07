@@ -29,28 +29,19 @@ import { cn } from "@/lib/utils";
 import { useDashboardMode, type Mode } from "./dashboard-mode-context";
 import { ModeSwitcher } from "./mode-switcher";
 
+// ────────────────────────────────────────────────────────────────────────
+// Nav data — single source of truth for both the desktop Sidebar, the
+// mobile SidebarNav (Sheet), and the CommandMenu. Exported so other
+// components can derive their routes from the same shape (phase 8
+// completeness check, plan 9 tests).
+// ────────────────────────────────────────────────────────────────────────
+
 // Mode visibility arrays. Single source of truth for nav inclusion.
 const ALL: Mode[] = ["search", "social", "combined"];
 const SEARCH_OR_COMBINED: Mode[] = ["search", "combined"];
 const SOCIAL_OR_COMBINED: Mode[] = ["social", "combined"];
 
-// Curated-subset design (the agreed spec):
-//
-//   SEARCHMODE  →  Dashboard (1) + SEO Intelligence (4) +
-//                  AI Engine (3) + Account (3)    = 11 items, 4 groups
-//   SOCIALMODE  →  Dashboard (1) + Social Media (4) +
-//                  AI Engine (3) + Account (3)    = 11 items, 4 groups
-//   COMBINED    →  Dashboard (1) + SEO (3 — drop Backlinks) +
-//                  Social (3 — drop Profile Discovery) +
-//                  AI Engine (3) + Account (3)    = 13 items, 5 groups
-//
-// Items hidden from the sidebar move into per-mode overview
-// SectionTabs drill-downs (built in a later phase):
-//   * Backlink Analysis       → Site Explorer drill-down
-//   * Profile Discovery       → Profile Analyzer drill-down
-//   * AI Insights / Action Center / Alerts / Custom Reports
-//                              → overview pages per mode
-type NavItem = {
+export type NavItem = {
   name: string;
   href: string;
   icon: typeof LayoutDashboard;
@@ -60,14 +51,37 @@ type NavItem = {
   modeExtras?: Mode[];
 };
 
-type NavGroup = {
+export type NavGroup = {
   title: string;
   modes: Mode[];
   defaultOpen: boolean;
   items: NavItem[];
 };
 
-const navGroups: NavGroup[] = [
+// Curated-subset design (the agreed spec):
+//
+//   SEARCHMODE  →  Dashboard (1) + SEO Intelligence (4) +
+//                  AI Engine (3) + Account (3)    = 11 items, 4 groups
+//   SOCIALMODE  →  Dashboard (1) + Social Media (4) +
+//                  AI Engine (3) + Account (3)    = 11 items, 4 groups
+//   COMBINED    →  Dashboard (3 — drop Backlinks) +
+//                  Social (3 — drop Profile Discovery) +
+//                  AI Engine (3) + Account (3)    = 13 items, 5 groups
+//
+// Items hidden from the sidebar move into per-mode overview
+// SectionTabs drill-downs (built in a later phase):
+//   * Backlink Analysis       → Site Explorer drill-down
+//   * Profile Discovery       → Profile Analyzer drill-down
+//   * AI Insights / Action Center / Alerts / Custom Reports
+//                              → overview pages per mode
+//
+// Notes:
+//   * Settings points at /projects/settings — that's the only Settings
+//     page that exists; the Sidebar's prior hard-coded `/settings`
+//     link 404'd for everyone. Phase 8 fix.
+//   * Node 22 module-shape: nn uses unused-import warnings, so unused
+//     icons pruned (BrainCircuit, FileText, etc).
+export const navGroups: NavGroup[] = [
   {
     title: "Dashboard",
     modes: ALL,
@@ -129,29 +143,26 @@ const navGroups: NavGroup[] = [
       { name: "All Projects", href: "/projects", icon: FolderOpen },
       { name: "Create Project", href: "/projects/create", icon: PlusSquare },
       { name: "Project Settings", href: "/projects/settings", icon: Settings },
-      { name: "Settings", href: "/settings", icon: Settings, modeExtras: ["combined"] },
       { name: "Billing", href: "/billing", icon: CreditCard },
       { name: "Integrations", href: "/integrations", icon: Blocks },
     ],
   },
 ];
 
-// Node 22 module-shape: nn uses unused-import warnings, so unused icons
-// pruned (BrainCircuit, FileText, CreditCard, Calendar, Zap, Blocks, etc.).
-// Notes:
-//   * The original 7-group layout grew to 22 items. The curated subset
-//     here caps Combined at 13 items in 5 groups. Search and Social
-//     are each at 11 items in 4 groups (their SEO or Social group is
-//     absent).
-//   * Backlink Analysis and Profile Discovery use modeExtras to leave
-//     the sidebar in Combined mode but stay visible in the per-mode
-//     home mode. This matches the spec.
-
-export function Sidebar() {
+// ────────────────────────────────────────────────────────────────────────
+// SidebarNav — renders the nav content only (no outer container). Both
+// the fixed desktop Sidebar and the mobile-Sheet Sidebar wrap this.
+//
+// Tracks the open/closed state of each collapsible group internally;
+// when the route changes (pathname), all groups briefly close on remount
+// of the Sheet to keep the UX obvious. The Sheet won't normally unmount
+// the inner content during a soft nav, so the visible "stay open"
+// behaviour is intentional for the desktop Sidebar.
+// ────────────────────────────────────────────────────────────────────────
+export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { mode } = useDashboardMode();
 
-  // Track which groups are open. Initial state respects `defaultOpen`.
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     for (const g of navGroups) {
@@ -179,8 +190,61 @@ export function Sidebar() {
     .filter((group) => group.items.length > 0);
 
   return (
-    <div className="fixed inset-y-0 left-0 z-50 w-64 flex-col bg-background border-r border-border hidden lg:flex">
+    <div className="flex flex-1 flex-col overflow-y-auto subtle-scrollbar space-y-4">
+      {visibleGroups.map((group) => {
+        const isOpen = openGroups[group.title];
+        return (
+          <div key={group.title} className="space-y-1">
+            <button
+              onClick={() => toggleGroup(group.title)}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider hover:text-foreground transition-colors group outline-none"
+            >
+              <span>{group.title}</span>
+              {isOpen ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5" />
+              )}
+            </button>
+            {isOpen && (
+              <ul className="space-y-0.5">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = pathname === item.href;
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        onClick={onNavigate}
+                        className={cn(
+                          "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                          isActive
+                            ? "bg-brand-50 text-brand-700"
+                            : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                        )}
+                      >
+                        <Icon className="w-4 h-4 shrink-0" />
+                        <span className="flex-1 truncate">{item.name}</span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
+// ────────────────────────────────────────────────────────────────────────
+// Sidebar — fixed-left desktop nav. Renders the brand header, mode
+// switcher, and the same SidebarNav used by the mobile Sheet.
+// ────────────────────────────────────────────────────────────────────────
+export function Sidebar() {
+  return (
+    <div className="fixed inset-y-0 left-0 z-50 w-64 flex-col bg-background border-r border-border hidden lg:flex">
       {/* Brand Header */}
       <div className="flex h-16 shrink-0 items-center px-6 border-b border-border">
         <Link
@@ -200,50 +264,8 @@ export function Sidebar() {
       </div>
 
       {/* Scrollable Navigation Area */}
-      <div className="flex flex-1 flex-col overflow-y-auto px-3 py-4 subtle-scrollbar space-y-4">
-
-        {visibleGroups.map((group) => {
-          const isOpen = openGroups[group.title];
-          return (
-            <div key={group.title} className="space-y-1">
-              <button
-                onClick={() => toggleGroup(group.title)}
-                className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider hover:text-foreground transition-colors group outline-none"
-              >
-                <span>{group.title}</span>
-                {isOpen ? (
-                  <ChevronDown className="w-3.5 h-3.5" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5" />
-                )}
-              </button>
-              {isOpen && (
-                <ul className="space-y-0.5">
-                  {group.items.map((item) => {
-                    const Icon = item.icon;
-                    const isActive = pathname === item.href;
-                    return (
-                      <li key={item.href}>
-                        <Link
-                          href={item.href}
-                          className={cn(
-                            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                            isActive
-                              ? "bg-brand-50 text-brand-700 dark:bg-brand-900/20 dark:text-brand-300"
-                              : "text-slate-600 hover:text-slate-900 hover:bg-slate-50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/50"
-                          )}
-                        >
-                          <Icon className="w-4 h-4 shrink-0" />
-                          <span className="flex-1 truncate">{item.name}</span>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          );
-        })}
+      <div className="flex flex-1 flex-col px-3 py-4 overflow-hidden">
+        <SidebarNav />
       </div>
     </div>
   );

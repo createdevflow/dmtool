@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { dashboardApi } from "@/lib/api-client";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { SimulatedBanner } from "@/components/dashboard/simulated-banner";
 import { toast } from "@/components/ui/toaster";
 
 const insightConfig: Record<string, { icon: any; color: string; bg: string; border: string; label: string }> = {
@@ -34,6 +35,7 @@ export default function SocialInsightsPage() {
   const [generating, setGenerating] = useState(false);
   const [filter, setFilter] = useState("all");
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  const [isSimulated, setIsSimulated] = useState(false);
 
   const fetchData = async (targetProjectId?: number) => {
     setLoading(true);
@@ -61,6 +63,12 @@ export default function SocialInsightsPage() {
           description: i.description || i.body || i.Body || "",
         }));
         setInsights(normalized);
+
+        // Check if social metrics are simulated
+        const socialRes = await dashboardApi.getSocialInsights(selected.id);
+        const socialData = socialRes.data?.data ?? [];
+        const anySimulated = socialData.some((m: any) => m.is_simulated || m.IsSimulated);
+        setIsSimulated(anySimulated);
       }
     } catch (err) {
       console.error(err);
@@ -112,6 +120,10 @@ export default function SocialInsightsPage() {
         onProjectChange={(p: any) => fetchData(p.id)}
         onAddSource={() => {}}
       />
+
+      {isSimulated && (
+        <SimulatedBanner message="Social metrics are estimated. Connect Meta API for live follower counts, reach, and engagement." />
+      )}
 
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">

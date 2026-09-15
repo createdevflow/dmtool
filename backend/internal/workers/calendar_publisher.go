@@ -186,6 +186,7 @@ func markPublishFailure(taskRepo repository.TaskRepository, task *models.Task, m
 	if err := taskRepo.Update(task); err != nil {
 		log.Printf("[worker:CalendarPublisher] failed to mark task %d as failed: %v", task.ID, err)
 	}
+	log.Printf("[worker:CalendarPublisher] task %d failed: %s", task.ID, message)
 }
 
 func resolveIGTargetAccount(accounts []services.MetaAccount, handle string) (string, string) {

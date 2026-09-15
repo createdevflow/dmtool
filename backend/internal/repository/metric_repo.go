@@ -2,8 +2,6 @@
 package repository
 
 import (
-	"strings"
-
 	"backend/internal/models"
 
 	"gorm.io/gorm"
@@ -86,30 +84,19 @@ func (r *gormMetricRepository) FindLatestSocialMetric(projectID uint, platform s
 	return &sm, err
 }
 // FindLatestSocialMetrics returns the most recent social metric for each platform.
+// Uses a single SQL query to pick the top row per LOWER(platform), preserving the
+// prior ORDER BY (is_simulated ASC, recorded_at DESC, id DESC) tiebreak by
+// selecting MAX(id) per platform group (id is monotonic on insert).
 func (r *gormMetricRepository) FindLatestSocialMetrics(projectID uint) ([]models.SocialMetric, error) {
 	var metrics []models.SocialMetric
-	err := r.db.Where("project_id = ?", projectID).
-		Order("LOWER(platform) ASC, is_simulated ASC, recorded_at DESC, id DESC").
-		Find(&metrics).Error
-	if err != nil {
-		return metrics, err
-	}
-
-	// Collapse case-variant duplicates and keep the newest live metric per platform.
-	seen := make(map[string]struct{})
-	filtered := make([]models.SocialMetric, 0, len(metrics))
-	for _, metric := range metrics {
-		key := strings.ToLower(strings.TrimSpace(metric.Platform))
-		if key == "" {
-			continue
-		}
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		filtered = append(filtered, metric)
-	}
-
-	metrics = filtered
+	err := r.db.Raw(`
+		SELECT * FROM social_metrics
+		WHERE id IN (
+			SELECT MAX(id) FROM social_metrics
+			WHERE project_id = ?
+			GROUP BY LOWER(platform)
+		)
+		ORDER BY LOWER(platform) ASC, is_simulated ASC, recorded_at DESC, id DESC
+	`, projectID).Scan(&metrics).Error
 	return metrics, err
 }

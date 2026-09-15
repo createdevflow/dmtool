@@ -66,6 +66,7 @@ export const authApi = {
   login: (data: { email: string; password: string }) =>
     axios.post(`${API_BASE}/auth/login`, data),
   me: () => apiClient.get("/auth/me"),
+  updateMe: (data: { dashboard_mode: string }) => apiClient.patch("/auth/me", data),
   logout: () => apiClient.post("/auth/logout"),
 };
 
@@ -218,6 +219,23 @@ export const publicApi = {
 // Phase 6. The Subscribe and StartTrial endpoints are stub-Stripe (no
 // real charge) until billing/webhook is implemented; the trial endpoint
 // starts a 14-day trialing row on a pro plan.
+export type Project = {
+  id: number;
+  created_at: string;
+  updated_at: string;
+  user_id: number;
+  name: string;
+  url: string;
+  goal: string;
+  status: string;
+  health: string;
+  health_score: number;
+  ig_handle: string;
+  facebook_handle: string;
+  twitter_handle: string;
+  linkedin_handle: string;
+};
+
 export type Plan = {
   id: number;
   code: string;
@@ -275,6 +293,7 @@ export type AdminUserSummary = {
   created_at: string;
   trial_used_at?: string | null;
   last_login_at?: string | null;
+  disabled_at?: string | null;
 };
 
 export type AdminPlan = {
@@ -311,10 +330,128 @@ export type AdminStats = {
   plan_breakdown: Record<string, number>;
   user_growth_30d: Array<{ date: string; count: number }>;
   recent_activity: AdminAuditEntry[];
+  // Phase 3: project stats + feature adoption
+  total_projects: number;
+  projects_new_7d: number;
+  projects_new_30d: number;
+  avg_health_score: number;
+  health_breakdown: Record<string, number>;
+  goal_breakdown: Record<string, number>;
+  feature_adoption: Record<string, number>;
+};
+
+export type PlatformSEOHealth = {
+  total_seo_projects: number;
+  avg_health_score: number;
+  total_keywords: number;
+  keywords_in_top_10: number;
+  total_open_issues: number;
+  critical_issues: number;
+  issue_breakdown: Record<string, number>;
+  health_distribution: Record<string, number>;
+};
+
+export type PlatformSocialHealth = {
+  total_social_projects: number;
+  total_followers: number;
+  avg_engagement_rate: number;
+  total_reach: number;
+  platform_breakdown: Record<string, number>;
+  status_breakdown: Record<string, number>;
+  top_projects: Array<{
+    project_id: number;
+    name: string;
+    url: string;
+    owner_email: string;
+    platform: string;
+    followers: number;
+    engagement_rate: number;
+    reach: number;
+  }>;
+};
+
+export type AdminUserActivity = {
+  id: number;
+  created_at: string;
+  user_id: number;
+  action: string;
+  metadata: Record<string, unknown> | null;
+  ip_address: string;
+  user_agent: string;
+};
+
+export type AdminProjectSummary = {
+  id: number;
+  name: string;
+  url: string;
+  user_id: number;
+  owner_email: string;
+  goal: string;
+  status: string;
+  health: string;
+  health_score: number;
+  created_at: string;
+};
+
+export type AdminSocialMetric = {
+  id: number;
+  project_id: number;
+  platform: string;
+  followers: number;
+  following_count: number;
+  posts_count: number;
+  reach: number;
+  engagement_rate: number;
+  status: string;
+  is_simulated: boolean;
+  recorded_at: string;
+};
+
+export type AdminInsight = {
+  id: number;
+  created_at: string;
+  project_id: number;
+  type: string;
+  title: string;
+  body: string;
+  priority: number;
+};
+
+export type SEOIssue = {
+  id: number;
+  created_at: string;
+  project_id: number;
+  url: string;
+  severity: string;
+  category: string;
+  detail: string;
+  resolved_at: string | null;
+};
+
+export type KeywordResult = {
+  id: number;
+  created_at: string;
+  project_id: number;
+  seed: string;
+  keyword: string;
+  volume: number;
+  kd: number;
+  position: number;
+};
+
+export type Metric = {
+  id: number;
+  project_id: number;
+  date: string;
+  clicks: number;
+  impressions: number;
+  reach: number;
+  engagement: number;
+  source: string;
 };
 
 export const adminApi = {
-  listUsers: (params: { page?: number; size?: number; search?: string; plan?: string } = {}) =>
+  listUsers: (params: { page?: number; size?: number; search?: string; plan?: string; role?: string; mode?: string; status?: string } = {}) =>
     apiClient.get<{
       data: { users: AdminUserSummary[]; total: number; page: number; size: number };
     }>("/admin/users", { params }),
@@ -332,6 +469,20 @@ export const adminApi = {
     apiClient.post<{
       data: { user_id: number; temporary_password: string; message: string };
     }>(`/admin/users/${id}/reset-password`),
+  getUserActivity: (id: number, limit = 50) =>
+    apiClient.get<{
+      data: { user_id: number; activities: AdminUserActivity[] };
+    }>(`/admin/users/${id}/activity`, { params: { limit } }),
+  suspendUser: (id: number, reason?: string) =>
+    apiClient.post<{
+      data: { user_id: number; disabled_at: string; message: string };
+    }>(`/admin/users/${id}/suspend`, { reason: reason || "" }),
+  unsuspendUser: (id: number) =>
+    apiClient.post<{
+      data: { user_id: number; message: string };
+    }>(`/admin/users/${id}/unsuspend`),
+  exportUsers: () =>
+    apiClient.get("/admin/users/export", { responseType: "blob" }),
   impersonate: (id: number) =>
     apiClient.post<{
       data: { token: string; target: { id: number; email: string; name: string }; expires_in_minutes: number };
@@ -348,6 +499,67 @@ export const adminApi = {
       data: { entries: AdminAuditEntry[]; total: number; page: number; size: number };
     }>("/admin/audit-log", { params }),
   stats: () => apiClient.get<{ data: AdminStats }>("/admin/stats"),
+  // ── Projects (admin) ──
+  listProjects: (params: { page?: number; size?: number; search?: string; goal?: string; health?: string; owner?: string } = {}) =>
+    apiClient.get<{
+      data: { projects: AdminProjectSummary[]; total: number; page: number; size: number };
+    }>("/admin/projects", { params }),
+  getProject: (id: number) =>
+    apiClient.get<{
+      data: {
+        project: Project;
+        owner: { id: number; name: string; email: string };
+        seo: { open_issues: number; critical_issues: number; keyword_count: number };
+        social: AdminSocialMetric | null;
+        insights: AdminInsight[];
+      };
+    }>(`/admin/projects/${id}`),
+  getProjectMetrics: (id: number, limit = 30) =>
+    apiClient.get<{
+      data: { project_id: number; metrics: Metric[] };
+    }>(`/admin/projects/${id}/metrics`, { params: { limit } }),
+  getProjectSEO: (id: number) =>
+    apiClient.get<{
+      data: { project_id: number; issues: SEOIssue[]; keywords: KeywordResult[] };
+    }>(`/admin/projects/${id}/seo`),
+  getProjectSocial: (id: number) =>
+    apiClient.get<{
+      data: { project_id: number; latest: AdminSocialMetric | null; history: AdminSocialMetric[] };
+    }>(`/admin/projects/${id}/social`),
+  getProjectStats: () =>
+    apiClient.get<{
+      data: {
+        total_projects: number;
+        health_breakdown: Record<string, number>;
+        goal_breakdown: Record<string, number>;
+        avg_health_score: number;
+        new_7d: number;
+        new_30d: number;
+      };
+    }>("/admin/projects/stats"),
+  // ── Platform health (Phase 3) ──
+  platformSEOHealth: () =>
+    apiClient.get<{ data: PlatformSEOHealth }>("/admin/platform/seo-health"),
+  platformSocialHealth: () =>
+    apiClient.get<{ data: PlatformSocialHealth }>("/admin/platform/social-health"),
+  // ── System health (Phase 4) ──
+  platformHealth: () =>
+    apiClient.get<{
+      data: {
+        status: string;
+        services: Record<string, { status: string; latency?: string; total?: number; expired?: number; sync_errors?: number; with_issues?: number }>;
+      };
+    }>("/admin/platform/health"),
+  integrationsStatus: () =>
+    apiClient.get<{
+      data: {
+        total_connections: number;
+        active_connections: number;
+        unique_users: number;
+        unique_projects: number;
+        providers: Array<{ provider: string; total: number; expired: number; sync_errors: number; last_synced_at: string | null }>;
+      };
+    }>("/admin/integrations/status"),
 };
 
 export default apiClient;

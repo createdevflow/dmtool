@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rsa"
+	"encoding/json"
 	"log"
 	"time"
 
@@ -12,33 +13,40 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type AuthHandler struct {
+	db               *gorm.DB
 	userRepo         repository.UserRepository
 	tokenRepo        repository.RefreshTokenRepository
 	projectRepo      repository.ProjectRepository
 	subscriptionRepo repository.SubscriptionRepository
+	activityRepo     repository.UserActivityRepository
 	privKey          *rsa.PrivateKey
 	pubKey           *rsa.PublicKey
 	encKey           []byte
 	cfg              *config.Config
 }
 func NewAuthHandler(
+	db *gorm.DB,
 	userRepo repository.UserRepository,
 	tokenRepo repository.RefreshTokenRepository,
 	projectRepo repository.ProjectRepository,
 	subscriptionRepo repository.SubscriptionRepository,
+	activityRepo repository.UserActivityRepository,
 	privKey *rsa.PrivateKey,
 	pubKey *rsa.PublicKey,
 	encKey []byte,
 	cfg *config.Config,
 ) *AuthHandler {
 	return &AuthHandler{
+		db:               db,
 		userRepo:         userRepo,
 		tokenRepo:        tokenRepo,
 		projectRepo:      projectRepo,
 		subscriptionRepo: subscriptionRepo,
+		activityRepo:     activityRepo,
 		privKey:          privKey,
 		pubKey:           pubKey,
 		encKey:           encKey,
@@ -125,6 +133,23 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		utils.Unauthorized(c, "Invalid email or password")
 		return
+	}
+
+	// Log login event and update login tracking fields.
+	now := time.Now()
+	h.db.Model(&models.User{}).Where("id = ?", user.ID).Updates(map[string]any{
+		"last_login_at": now,
+		"login_count":   gorm.Expr("login_count + 1"),
+	})
+	if h.activityRepo != nil {
+		meta, _ := json.Marshal(map[string]any{"email": user.Email})
+		_ = h.activityRepo.Create(&models.UserActivity{
+			UserID:    user.ID,
+			Action:    models.UserActivityLogin,
+			Metadata:  meta,
+			IPAddress: c.ClientIP(),
+			UserAgent: c.Request.UserAgent(),
+		})
 	}
 
 	h.issueTokens(c, user)

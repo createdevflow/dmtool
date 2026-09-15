@@ -40,7 +40,13 @@ type User struct {
 	// eligibility check saw a fresh user).
 	TrialUsedAt *time.Time `json:"trial_used_at,omitempty"`
 
- 	Projects []Project `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"projects,omitempty"`
+	// Phase 1 admin enhancements: suspension and login tracking.
+	DisabledAt     *time.Time `json:"disabled_at,omitempty"`
+	DisabledReason string     `gorm:"size:500" json:"disabled_reason,omitempty"`
+	LastLoginAt    *time.Time `json:"last_login_at,omitempty"`
+	LoginCount     int        `gorm:"default:0" json:"login_count"`
+
+	Projects []Project `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"projects,omitempty"`
 }
 
 // Mode constants are defined in user_preference.go; constants reused

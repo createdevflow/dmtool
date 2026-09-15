@@ -33,11 +33,9 @@ const SEARCH_TABS: SectionTab[] = [
   { label: "Overview", href: "/dashboard" },
   { label: "Site Explorer", href: "/seo/site-explorer" },
   { label: "Keyword Research", href: "/seo/keywords" },
-  { label: "Backlinks", href: "/seo/backlinks" },
   { label: "Rank Tracking", href: "/seo/rank-tracking" },
   { label: "AI Insights", href: "/ai-insights" },
   { label: "Action Center", href: "/action-center" },
-  { label: "Alerts", href: "/alerts" },
 ];
 
 const SOCIAL_TABS: SectionTab[] = [
@@ -45,25 +43,20 @@ const SOCIAL_TABS: SectionTab[] = [
   { label: "Profile Analyzer", href: "/social/profile-analyzer" },
   { label: "Content Analytics", href: "/social/insights" },
   { label: "Growth Tracking", href: "/social/growth" },
-  { label: "Profile Discovery", href: "/social/competitors" },
   { label: "AI Insights", href: "/ai-insights" },
   { label: "Action Center", href: "/action-center" },
-  { label: "Alerts", href: "/alerts" },
 ];
 
 const COMBINED_TABS: SectionTab[] = [
   { label: "Overview", href: "/dashboard" },
   { label: "Site Explorer", href: "/seo/site-explorer" },
   { label: "Keyword Research", href: "/seo/keywords" },
-  { label: "Backlinks", href: "/seo/backlinks" },
   { label: "Rank Tracking", href: "/seo/rank-tracking" },
   { label: "Profile Analyzer", href: "/social/profile-analyzer" },
   { label: "Content Analytics", href: "/social/insights" },
   { label: "Growth Tracking", href: "/social/growth" },
-  { label: "Profile Discovery", href: "/social/competitors" },
   { label: "AI Insights", href: "/ai-insights" },
   { label: "Action Center", href: "/action-center" },
-  { label: "Alerts", href: "/alerts" },
   { label: "Traffic", href: "/analytics/traffic" },
   { label: "Custom Reports", href: "/analytics/custom" },
 ];
@@ -87,15 +80,12 @@ const TAB_DESCRIPTIONS: Record<string, string> = {
   "/dashboard": "Daily snapshot of clicks, impressions, and AI insights for the active project.",
   "/seo/site-explorer": "Audit the live site: meta tags, headers, indexing, and speed.",
   "/seo/keywords": "Discover keyword opportunities and track positions over time.",
-  "/seo/backlinks": "See who links to you and where the link equity flows.",
-  "/seo/rank-tracking": "Daily position tracking for your target keywords.",
+  "/seo/rank-tracking": "Positions from Google Search Console, not a daily rank tracker.",
   "/social/profile-analyzer": "Reach, engagement, and audience growth for the connected social profile.",
   "/social/insights": "Post-level performance and audience interaction patterns.",
   "/social/growth": "Follower growth, content cadence, and engagement velocity.",
-  "/social/competitors": "Compare your account against competitors in the same niche.",
   "/ai-insights": "AI-generated recommendations ranked by impact and recency.",
   "/action-center": "Tasks the system thinks you should do next.",
-  "/alerts": "Real-time alerts for quota hits, integration failures, ranking drops.",
   "/analytics/traffic": "Time-series of traffic, engagement, and source mix.",
   "/analytics/custom": "Build ad-hoc reports from any project metric.",
 };

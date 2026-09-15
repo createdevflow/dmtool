@@ -118,7 +118,7 @@ func newRevenueHarness(t *testing.T) *revenueHarness {
 	projRepo := repository.NewProjectRepository(database)
 	ent := entitlements.New(database, subRepo, planRepo, projRepo)
 	// privKey is `any`; nil is fine — Stats doesn't mint tokens.
-	h := NewAdminHandler(database, userRepo, subRepo, planRepo, auditRepo, projRepo, nil)
+	h := NewAdminHandler(database, userRepo, subRepo, planRepo, auditRepo, projRepo, nil, nil)
 	_ = ent
 	return &revenueHarness{db: database, h: h}
 }

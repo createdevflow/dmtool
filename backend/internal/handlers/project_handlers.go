@@ -151,8 +151,7 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Trigger seeder for new project (Real-looking data for demo/initial state)
-	go utils.SeedProject(h.db, project.ID)
+	go h.autoSyncNewProject(project, userID)
 
 	utils.Success(c, project, nil)
 }
@@ -237,8 +236,8 @@ func (h *ProjectHandler) Onboard(c *gin.Context) {
 		URL:           req.URL,
 		Goal:          req.Goal,
 		Status:        "active",
-		Health:        "analyzing",
-		HealthScore:   75,
+		Health:        "scanning",
+		HealthScore:   0,
 		IGHandle:      req.InstagramHandle,
 		TwitterHandle: req.TwitterHandle,
 		LinkedinHandle: req.LinkedinHandle,
@@ -266,54 +265,39 @@ func (h *ProjectHandler) Onboard(c *gin.Context) {
 		return
 	}
 
-	go utils.SeedProject(h.db, project.ID)
+	mode := dashboardModeFromGoal(req.Goal)
+	if err := h.db.Model(&models.User{}).Where("id = ?", userID).Update("dashboard_mode", mode).Error; err != nil {
+		log.Printf("[project] failed to set dashboard_mode=%s for user %d: %v", mode, userID, err)
+	}
+
 	go h.autoSyncNewProject(project, userID)
 
 	utils.Success(c, gin.H{
-		"message": "Onboarding started",
-		"project": project,
+		"message":         "Onboarding started",
+		"project":         project,
+		"dashboard_mode":  mode,
 	}, nil)
+}
+
+func dashboardModeFromGoal(goal string) string {
+	switch goal {
+	case models.GoalSEO:
+		return models.DashboardModeSearch
+	case models.GoalSocial:
+		return models.DashboardModeSocial
+	default:
+		return models.DashboardModeCombined
+	}
 }
 
 // autoSyncNewProject triggers centralized data provider sync.
 func (h *ProjectHandler) autoSyncNewProject(project *models.Project, userID uint) {
 	log.Printf("[project] Auto-sync triggered for new project %d (%s)", project.ID, project.Name)
 
-	if project.URL != "" && h.dataForSEOSvc != nil {
-		metrics, err := h.dataForSEOSvc.FetchEstimatedTraffic(project.URL)
-		if err == nil {
-			for _, m := range metrics {
-				m.ProjectID = project.ID
-				h.metricRepo.UpsertMetric(&m)
-			}
-			log.Printf("[project] Auto-synced %d Traffic records for project %d", len(metrics), project.ID)
-		}
-	}
-
-	if project.IGHandle != "" && h.rapidAPISvc != nil {
-		sm, err := h.rapidAPISvc.FetchInstagramProfile(project.IGHandle)
-		if err == nil && sm != nil && sm.Followers > 0 {
-			sm.ProjectID = project.ID
-			h.metricRepo.CreateSocialMetric(sm)
-			log.Printf("[project] Auto-synced Social metrics for project %d: %d followers", project.ID, sm.Followers)
-		}
-	}
-
 	if project.URL != "" && h.crawlerService != nil {
 		crawlResult, err := h.crawlerService.Crawl(project.URL)
 		if err == nil {
-			for _, check := range crawlResult.Checks {
-				if check.Status == services.CheckFail || check.Status == services.CheckWarning {
-					issue := &models.SEOIssue{
-						ProjectID: project.ID,
-						URL:       project.URL,
-						Severity:  check.Severity,
-						Category:  check.Category,
-						Detail:    check.Label + ": " + check.Detail,
-					}
-					h.seoRepo.CreateIssue(issue)
-				}
-			}
+			_ = h.seoRepo.ReplaceOpenIssues(project.ID, issuesFromChecks(project.ID, project.URL, crawlResult.Checks))
 			project.HealthScore = crawlResult.Score
 			if crawlResult.Score >= 75 {
 				project.Health = "healthy"

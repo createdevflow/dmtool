@@ -1,55 +1,9 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { Shield, Users, CreditCard, ScrollText, ArrowLeft } from "lucide-react";
 import { adminApi } from "@/lib/api-client";
 import { toast } from "@/components/ui/toaster";
-import { cn } from "@/lib/utils";
-
-// AdminSubNav is the in-page tab strip for /admin/*. The full app
-// sidebar doesn't expose admin items (admins are a tiny fraction of
-// users) — this sub-nav is the entire admin chrome, plus a "back to
-// app" link.
-function AdminSubNav() {
-  const pathname = usePathname();
-  const links = [
-    { href: "/admin", label: "Overview", icon: Shield, exact: true },
-    { href: "/admin/users", label: "Users", icon: Users },
-    { href: "/admin/plans", label: "Plans", icon: CreditCard },
-    { href: "/admin/audit-log", label: "Audit Log", icon: ScrollText },
-  ];
-  return (
-    <div className="flex items-center gap-1 mb-6 border-b border-slate-200 pb-3 flex-wrap">
-      <Link
-        href="/dashboard/combined"
-        className="text-xs text-slate-500 hover:text-slate-900 inline-flex items-center gap-1 mr-3"
-      >
-        <ArrowLeft className="w-3 h-3" /> Back to app
-      </Link>
-      {links.map((l) => {
-        const active = l.exact ? pathname === l.href : pathname.startsWith(l.href);
-        const Icon = l.icon;
-        return (
-          <Link
-            key={l.href}
-            href={l.href}
-            className={cn(
-              "px-3 py-1.5 rounded-lg text-sm font-medium inline-flex items-center gap-2 transition-colors",
-              active
-                ? "bg-slate-900 text-white"
-                : "text-slate-600 hover:bg-slate-100"
-            )}
-          >
-            <Icon className="w-4 h-4" />
-            {l.label}
-          </Link>
-        );
-      })}
-    </div>
-  );
-}
 
 // AdminGuard is the client-side half of role enforcement. The backend
 // already returns 403 for non-admins (RequireRole middleware), but
@@ -96,12 +50,7 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-  return (
-    <div>
-      <AdminSubNav />
-      {children}
-    </div>
-  );
+  return <>{children}</>;
 }
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

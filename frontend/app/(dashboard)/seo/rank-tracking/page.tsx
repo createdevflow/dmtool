@@ -15,6 +15,7 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { toast } from "@/components/ui/toaster";
 
 function positionColor(pos: number) {
+  if (pos <= 0) return "text-slate-500 bg-slate-50";
   if (pos <= 3) return "text-emerald-600 bg-emerald-50";
   if (pos <= 10) return "text-blue-600 bg-blue-50";
   if (pos <= 30) return "text-amber-600 bg-amber-50";
@@ -22,6 +23,7 @@ function positionColor(pos: number) {
 }
 
 function positionLabel(pos: number) {
+  if (pos <= 0) return "No position";
   if (pos <= 3) return "Top 3";
   if (pos <= 10) return "Page 1";
   if (pos <= 30) return "Page 2-3";
@@ -67,11 +69,19 @@ export default function RankTrackingPage() {
     if (!project?.id) return;
     setSyncing(true);
     try {
-      await dashboardApi.syncProject(project.id);
-      toast("Keyword rankings refreshed!", "success");
+      const res = await dashboardApi.syncProject(project.id);
+      const payload = res.data?.data ?? {};
+      const statuses = [payload.traffic?.status, payload.rankings?.status, payload.social?.status, payload.seo?.status];
+      const anySuccess = statuses.includes("success");
+      toast(
+        anySuccess
+          ? "Sync complete."
+          : "Nothing to sync. Connect Google Search Console or Meta, or add a site URL.",
+        "success"
+      );
       fetchData(project.id);
     } catch (err: any) {
-      toast("Sync failed. Please try again.", "error");
+      toast(err.response?.data?.error?.message || "Sync failed. Please try again.", "error");
     } finally {
       setSyncing(false);
     }
@@ -85,12 +95,14 @@ export default function RankTrackingPage() {
     </div>
   );
 
-  const keywords = (data?.keywords ?? []).filter((k: any) =>
-    search ? k.keyword?.toLowerCase().includes(search.toLowerCase()) : true
-  );
+  const keywords = (data?.keywords ?? []).filter((k: any) => {
+    if (!(Number(k.position) > 0)) return false;
+    return search ? k.keyword?.toLowerCase().includes(search.toLowerCase()) : true;
+  });
   const buckets = data?.buckets ?? { top3: 0, top10: 0, top30: 0, beyond: 0 };
   const visibility = Math.round(data?.visibility ?? 0);
   const isGSC = data?.gsc_connected ?? false;
+  const hasRanks = (data?.total ?? 0) > 0;
 
   return (
     <div className="space-y-10 max-w-7xl mx-auto pb-32 pt-4">
@@ -106,13 +118,14 @@ export default function RankTrackingPage() {
         <div className="space-y-1">
           <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">SEO Intelligence</h2>
           <p className="text-3xl font-semibold text-slate-900 tracking-tight">Rank Tracking</p>
+          <p className="text-sm text-slate-500">Positions from Google Search Console, not a daily rank tracker.</p>
         </div>
         <div className="flex items-center gap-3">
           <Button
             variant="outline"
             className="rounded-xl h-10 border-slate-200 font-semibold gap-2 text-sm"
             onClick={handleSync}
-            disabled={syncing}
+            disabled={syncing || !project?.id}
           >
             {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             {syncing ? "Syncing..." : "Refresh Rankings"}
@@ -133,7 +146,7 @@ export default function RankTrackingPage() {
             </div>
             <div>
               <p className="text-sm font-bold text-blue-900">Connect Google Search Console for real keyword positions</p>
-              <p className="text-xs text-blue-600 font-medium">Currently showing seed keyword data — connect GSC for live positions</p>
+              <p className="text-xs text-blue-600 font-medium">Until then this page stays empty — we do not invent rankings.</p>
             </div>
           </div>
           <Button
@@ -146,63 +159,65 @@ export default function RankTrackingPage() {
         </motion.div>
       )}
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "Visibility Score", value: `${visibility}`, icon: Eye, sub: "out of 100" },
-          { label: "Top 3 Keywords", value: String(buckets.top3), icon: Award, sub: "ranking positions 1-3" },
-          { label: "Page 1 Keywords", value: String(buckets.top10), icon: TrendingUp, sub: "positions 1-10" },
-          { label: "Total Tracked", value: String(data?.total ?? 0), icon: Search, sub: "keywords" },
-        ].map((s, i) => (
-          <motion.div key={s.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-            <Card className="border-slate-100 shadow-none rounded-2xl hover:shadow-md transition-all">
-              <CardContent className="p-6">
-                <div className="w-9 h-9 rounded-xl bg-slate-50 flex items-center justify-center mb-4">
-                  <s.icon className="w-5 h-5 text-slate-500" />
-                </div>
-                <p className="text-2xl font-bold text-slate-900">{s.value}</p>
-                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mt-1">{s.label}</p>
-                <p className="text-[10px] text-slate-300 mt-0.5">{s.sub}</p>
-              </CardContent>
-            </Card>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Position Buckets Visual */}
-      <Card className="border-slate-100 shadow-none rounded-2xl">
-        <CardContent className="p-8">
-          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Position Distribution</h3>
+      {hasRanks && (
+        <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { label: "Positions 1-3", count: buckets.top3, color: "bg-emerald-500", total: data?.total || 1 },
-              { label: "Positions 4-10", count: buckets.top10, color: "bg-blue-500", total: data?.total || 1 },
-              { label: "Positions 11-30", count: buckets.top30, color: "bg-amber-400", total: data?.total || 1 },
-              { label: "Position 31+", count: buckets.beyond, color: "bg-slate-200", total: data?.total || 1 },
-            ].map((b) => (
-              <div key={b.label} className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <p className="text-xs font-semibold text-slate-500">{b.label}</p>
-                  <p className="text-sm font-bold text-slate-900">{b.count}</p>
-                </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full ${b.color} rounded-full transition-all duration-700`}
-                    style={{ width: `${Math.min(100, (b.count / (b.total || 1)) * 100)}%` }}
-                  />
-                </div>
-              </div>
+              { label: "Visibility Score", value: `${visibility}`, icon: Eye, sub: "out of 100" },
+              { label: "Top 3 Keywords", value: String(buckets.top3), icon: Award, sub: "ranking positions 1-3" },
+              { label: "Page 1 Keywords", value: String(buckets.top10), icon: TrendingUp, sub: "positions 1-10" },
+              { label: "Total Tracked", value: String(data?.total ?? 0), icon: Search, sub: "keywords" },
+            ].map((s, i) => (
+              <motion.div key={s.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+                <Card className="border-slate-100 shadow-none rounded-2xl hover:shadow-md transition-all">
+                  <CardContent className="p-6">
+                    <div className="w-9 h-9 rounded-xl bg-slate-50 flex items-center justify-center mb-4">
+                      <s.icon className="w-5 h-5 text-slate-500" />
+                    </div>
+                    <p className="text-2xl font-bold text-slate-900">{s.value}</p>
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mt-1">{s.label}</p>
+                    <p className="text-[10px] text-slate-300 mt-0.5">{s.sub}</p>
+                  </CardContent>
+                </Card>
+              </motion.div>
             ))}
           </div>
-        </CardContent>
-      </Card>
+
+          <Card className="border-slate-100 shadow-none rounded-2xl">
+            <CardContent className="p-8">
+              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Position Distribution</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: "Positions 1-3", count: buckets.top3, color: "bg-emerald-500", total: data?.total || 1 },
+                  { label: "Positions 4-10", count: buckets.top10, color: "bg-blue-500", total: data?.total || 1 },
+                  { label: "Positions 11-30", count: buckets.top30, color: "bg-amber-400", total: data?.total || 1 },
+                  { label: "Position 31+", count: buckets.beyond, color: "bg-slate-200", total: data?.total || 1 },
+                ].map((b) => (
+                  <div key={b.label} className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <p className="text-xs font-semibold text-slate-500">{b.label}</p>
+                      <p className="text-sm font-bold text-slate-900">{b.count}</p>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${b.color} rounded-full transition-all duration-700`}
+                        style={{ width: `${Math.min(100, (b.count / (b.total || 1)) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
 
       {/* Keywords Table */}
       <Card className="border-slate-100 shadow-none rounded-2xl overflow-hidden">
         <CardHeader className="px-8 pt-8 pb-4 flex flex-row items-center justify-between gap-4">
           <div>
             <CardTitle className="text-base font-semibold">Keyword Rankings</CardTitle>
-            <p className="text-xs text-slate-400 mt-1">{isGSC ? "Live positions from Google Search Console" : "Estimated positions — connect GSC for real data"}</p>
+            <p className="text-xs text-slate-400 mt-1">Positions from Google Search Console, not a daily rank tracker.</p>
           </div>
           <div className="relative w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -218,7 +233,7 @@ export default function RankTrackingPage() {
           {keywords.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20">
               <AlertCircle className="w-8 h-8 text-slate-200 mb-3" />
-              <p className="text-slate-500 font-semibold text-sm">No keywords found</p>
+              <p className="text-slate-500 font-semibold text-sm">No keyword positions from Google Search Console yet.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -253,18 +268,22 @@ export default function RankTrackingPage() {
                         </span>
                       </td>
                       <td className="px-4 py-4 text-center">
-                        <span className="font-semibold text-slate-700">{kw.volume?.toLocaleString() ?? "—"}</span>
+                        <span className="font-semibold text-slate-700">{kw.volume > 0 ? kw.volume.toLocaleString() : "—"}</span>
                       </td>
                       <td className="px-4 py-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${kw.kd > 60 ? "bg-rose-400" : kw.kd > 40 ? "bg-amber-400" : "bg-emerald-400"}`}
-                              style={{ width: `${kw.kd}%` }}
-                            />
+                        {kw.kd > 0 ? (
+                          <div className="flex items-center justify-center gap-2">
+                            <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${kw.kd > 60 ? "bg-rose-400" : kw.kd > 40 ? "bg-amber-400" : "bg-emerald-400"}`}
+                                style={{ width: `${kw.kd}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-semibold text-slate-500">{kw.kd}</span>
                           </div>
-                          <span className="text-xs font-semibold text-slate-500">{kw.kd}</span>
-                        </div>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
                       </td>
                       <td className="px-8 py-4 text-right">
                         <Badge className={`text-[10px] font-bold border-0 ${positionColor(kw.position)}`}>

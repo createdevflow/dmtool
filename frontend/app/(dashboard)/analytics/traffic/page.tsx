@@ -77,7 +77,8 @@ export default function TrafficPage() {
 
         setTraffic(tRes.data?.data ?? null);
         const mData = mRes.data?.data;
-        setMetrics(Array.isArray(mData) ? mData : []);
+        const rows = Array.isArray(mData) ? mData : [];
+        setMetrics(rows.filter((m: any) => m.source === "gsc"));
 
         // Check if GSC is connected
         const creds = intRes.data?.data ?? [];

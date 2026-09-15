@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Bell, Search, Moon, Sun, Menu } from "lucide-react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme-provider";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {

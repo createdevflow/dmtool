@@ -63,10 +63,14 @@ func runInsightGenerator(
 	t60 := now.AddDate(0, 0, -60).Format("2006-01-02")
 
 	for _, project := range projects {
-		// Fetch current and previous period metrics
+		// Fetch current and previous period metrics — GSC-only / live social only.
+		// Seed rows must not drive copy (Honesty Rule 1).
 		currentMetrics, _ := metricRepo.FindMetricsByProjectAndRange(project.ID, t30, t0)
 		previousMetrics, _ := metricRepo.FindMetricsByProjectAndRange(project.ID, t60, t30)
 		socialMetrics, _ := metricRepo.FindLatestSocialMetrics(project.ID)
+		currentMetrics = gscOnlyMetrics(currentMetrics)
+		previousMetrics = gscOnlyMetrics(previousMetrics)
+		socialMetrics = liveSocialMetrics(socialMetrics)
 
 		var insights []models.Insight
 
@@ -84,12 +88,10 @@ func runInsightGenerator(
 			insights = generateRuleBasedInsights(project, currentMetrics, previousMetrics, socialMetrics)
 		}
 
-		if len(insights) > 0 {
-			if err := insightRepo.ReplaceInsights(project.ID, insights); err != nil {
-				log.Printf("[worker:InsightGenerator] failed to save insights for project %d: %v", project.ID, err)
-			} else {
-				log.Printf("[worker:InsightGenerator] saved %d insights for project %d (%s)", len(insights), project.ID, project.Name)
-			}
+		if err := insightRepo.ReplaceInsights(project.ID, insights); err != nil {
+			log.Printf("[worker:InsightGenerator] failed to save insights for project %d: %v", project.ID, err)
+		} else {
+			log.Printf("[worker:InsightGenerator] saved %d insights for project %d (%s)", len(insights), project.ID, project.Name)
 		}
 	}
 
@@ -115,15 +117,33 @@ type trendSignals struct {
 	dataPoints      int
 }
 
+func gscOnlyMetrics(in []models.Metric) []models.Metric {
+	out := make([]models.Metric, 0, len(in))
+	for _, m := range in {
+		if m.Source == models.MetricSourceGSC {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func liveSocialMetrics(in []models.SocialMetric) []models.SocialMetric {
+	out := make([]models.SocialMetric, 0, len(in))
+	for _, sm := range in {
+		if !sm.IsSimulated {
+			out = append(out, sm)
+		}
+	}
+	return out
+}
+
 func computeSignals(current, previous []models.Metric, social []models.SocialMetric) trendSignals {
 	s := trendSignals{}
 
 	for _, m := range current {
 		s.currClicks += m.Clicks
 		s.currImpressions += m.Impressions
-		if m.Source == "gsc" {
-			s.hasGSCData = true
-		}
+		s.hasGSCData = true
 	}
 	for _, m := range previous {
 		s.prevClicks += m.Clicks
@@ -151,9 +171,7 @@ func computeSignals(current, previous []models.Metric, social []models.SocialMet
 		s.socialFollowers += sm.Followers
 		s.socialReach += sm.Reach
 		s.socialEngRate += sm.Engagement
-		if !sm.IsSimulated {
-			s.hasSocialData = true
-		}
+		s.hasSocialData = true
 	}
 	if len(social) > 0 {
 		s.socialEngRate = s.socialEngRate / float64(len(social))
@@ -239,13 +257,12 @@ func generateRuleBasedInsights(project models.Project, current, previous []model
 					sig.clickGrowth, formatNum(sig.prevClicks), formatNum(sig.currClicks)),
 			)
 		}
-	} else if sig.dataPoints < 3 {
-		// New project or no data yet
+	} else if !sig.hasGSCData {
 		addInsight(models.InsightTypeInfo,
 			"Connect Google Search Console for Real Traffic Data",
-			fmt.Sprintf("Your project '%s' is set up but no search performance data has been synced yet. "+
+			fmt.Sprintf("Your project '%s' has no Google Search Console traffic yet. "+
 				"Go to Integrations → Connect Google Search Console to start tracking real organic traffic, "+
-				"keyword rankings, and CTR data automatically.", project.Name),
+				"keyword rankings, and CTR. We do not invent those numbers.", project.Name),
 		)
 	}
 

@@ -1,5 +1,5 @@
-// proxy.ts — Next 16's renamed middleware file. Runs on the edge before
-// any route renders. Two responsibilities in phase 3:
+// proxy.ts — Next 16's proxy file (renamed from middleware). Runs on the
+// edge before any route renders. Two responsibilities in phase 3:
 //
 //   1. Auth gate — block requests to /(dashboard|admin)/* that don't
 //      carry a dmtool_token cookie. Unauthenticated requests redirect to
@@ -97,24 +97,7 @@ export function proxy(request: NextRequest) {
     }
   }
 
-  // ----- Mode rewrite ----------------------------------------------
-  if (pathname === "/dashboard" || pathname === "/dashboard/") {
-    const cookieMode = request.cookies.get("dmtool_mode")?.value;
-    const mode =
-      cookieMode !== undefined && DASHBOARD_MODES[cookieMode] === true
-        ? cookieMode
-        : "combined";
-    const url = request.nextUrl.clone();
-    url.pathname = `/dashboard/${mode}`;
-    return NextResponse.rewrite(url);
-  }
-  if (pathname === "/admin" || pathname === "/admin/") {
-    const url = request.nextUrl.clone();
-    url.pathname = `/admin/combined`;
-    return NextResponse.rewrite(url);
-  }
-
-  // ----- Auth gate -----------------------------------------------
+  // ----- Auth gate (MUST run before mode rewrite) -----------------
   // The gate is satisfied if EITHER the admin's own session token
   // (dmtool_token) OR an active impersonation token
   // (dmtool_impersonation_token) is present and JWT-shaped. The
@@ -138,6 +121,20 @@ export function proxy(request: NextRequest) {
       loginUrl.searchParams.set("return_to", pathname + (search || ""));
     }
     return NextResponse.redirect(loginUrl);
+  }
+
+  // ----- Mode rewrite (only runs after auth gate passes) ----------
+  // Dashboard gets mode-based rewrite; admin does NOT (it has its own
+  // mode switcher inside the admin sidebar).
+  if (pathname === "/dashboard" || pathname === "/dashboard/") {
+    const cookieMode = request.cookies.get("dmtool_mode")?.value;
+    const mode =
+      cookieMode !== undefined && DASHBOARD_MODES[cookieMode] === true
+        ? cookieMode
+        : "combined";
+    const url = request.nextUrl.clone();
+    url.pathname = `/dashboard/${mode}`;
+    return NextResponse.rewrite(url);
   }
 
   return NextResponse.next();

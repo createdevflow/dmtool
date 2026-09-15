@@ -6,7 +6,7 @@ export async function GET(request: Request) {
   const state = searchParams.get("state");
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL("/system/integrations?error=missing_params", request.url));
+    return NextResponse.redirect(new URL("/integrations?error=missing_params", request.url));
   }
 
   // Forward the code and state to the Go backend
@@ -21,11 +21,11 @@ export async function GET(request: Request) {
     const res = await fetch(`http://localhost:8080/api/oauth/google/callback?code=${code}&state=${state}`);
     
     if (res.ok) {
-      return NextResponse.redirect(new URL("/system/integrations?success=google_connected", request.url));
+      return NextResponse.redirect(new URL("/integrations?success=google_connected", request.url));
     } else {
-      return NextResponse.redirect(new URL("/system/integrations?error=backend_failed", request.url));
+      return NextResponse.redirect(new URL("/integrations?error=backend_failed", request.url));
     }
   } catch (err) {
-    return NextResponse.redirect(new URL("/system/integrations?error=server_error", request.url));
+    return NextResponse.redirect(new URL("/integrations?error=server_error", request.url));
   }
 }

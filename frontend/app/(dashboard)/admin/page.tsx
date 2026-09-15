@@ -2,9 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Users, CreditCard, TrendingUp, UserPlus, Activity, Crown, ShieldAlert } from "lucide-react";
+import {
+  Users, CreditCard, TrendingUp, UserPlus, Activity, ShieldAlert,
+  Globe, Search, Share2, Blocks, Zap
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { adminApi, type AdminStats } from "@/lib/api-client";
 import { formatDate } from "@/lib/utils";
 
@@ -19,15 +23,11 @@ export default function AdminOverviewPage() {
       .then((r) => {
         if (!cancelled) setStats(r.data.data);
       })
-      .catch(() => {
-        // Guard already handled 403/401; just show what we can.
-      })
+      .catch(() => {})
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   if (loading) {
@@ -40,10 +40,30 @@ export default function AdminOverviewPage() {
   const fmtDollars = (cents: number) =>
     cents === 0 ? "$0" : `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0 })}`;
 
-  // Build the "MRR is real" warning when we have no pro subscribers.
-  // Today MRR is computed from active subs; when Stripe is wired, this
-  // section will show the real revenue numbers instead.
   const mrrIsStub = stats.mrr_cents === 0 && stats.active_subs > 0;
+
+  const healthColor = (h: string) => {
+    switch (h) {
+      case "healthy": return "bg-emerald-500";
+      case "issues": return "bg-amber-500";
+      case "scanning": return "bg-blue-500";
+      default: return "bg-slate-300";
+    }
+  };
+
+  const featureIcons: Record<string, typeof Globe> = {
+    seo: Search,
+    social: Share2,
+    integrations: Blocks,
+    ai_content: Zap,
+  };
+
+  const featureLabels: Record<string, string> = {
+    seo: "SEO Tools",
+    social: "Social Tools",
+    integrations: "Integrations",
+    ai_content: "AI Content",
+  };
 
   return (
     <div className="space-y-6">
@@ -57,6 +77,7 @@ export default function AdminOverviewPage() {
         </p>
       </div>
 
+      {/* ── User Stats Row ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Total users" value={stats.total_users.toLocaleString()} icon={Users} />
         <StatCard
@@ -80,7 +101,108 @@ export default function AdminOverviewPage() {
         />
       </div>
 
-      {/* Plan breakdown */}
+      {/* ── Project Stats Row ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard
+          label="Total projects"
+          value={stats.total_projects.toLocaleString()}
+          icon={Globe}
+          sub={`${stats.projects_new_7d} new (7d)`}
+        />
+        <StatCard
+          label="Avg health"
+          value={stats.avg_health_score > 0 ? `${Math.round(stats.avg_health_score)}/100` : "—"}
+          icon={Activity}
+        />
+        <StatCard
+          label="Healthy"
+          value={(stats.health_breakdown["healthy"] || 0).toLocaleString()}
+          icon={Activity}
+          className="text-emerald-600"
+        />
+        <StatCard
+          label="Issues"
+          value={(stats.health_breakdown["issues"] || 0).toLocaleString()}
+          icon={Activity}
+          className="text-amber-600"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ── Feature Adoption ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Feature Adoption</CardTitle>
+            <CardDescription>Platform-wide feature usage rates.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {Object.keys(stats.feature_adoption).length === 0 ? (
+              <div className="text-sm text-slate-500">No data yet.</div>
+            ) : (
+              <div className="space-y-3">
+                {Object.entries(stats.feature_adoption)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([key, pct]) => {
+                    const Icon = featureIcons[key] || Globe;
+                    return (
+                      <div key={key} className="flex items-center gap-3">
+                        <Icon className="w-4 h-4 text-slate-400 shrink-0" />
+                        <div className="w-28 text-sm font-medium text-slate-700">
+                          {featureLabels[key] || key}
+                        </div>
+                        <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                          <div
+                            className="h-full bg-slate-900 rounded-full"
+                            style={{ width: `${Math.max(2, pct)}%` }}
+                          />
+                        </div>
+                        <div className="w-16 text-right text-sm text-slate-700 tabular-nums">
+                          {Math.round(pct)}%
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ── Health Distribution ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Project Health</CardTitle>
+            <CardDescription>Distribution of project health statuses.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {Object.keys(stats.health_breakdown).length === 0 ? (
+              <div className="text-sm text-slate-500">No projects yet.</div>
+            ) : (
+              <div className="space-y-3">
+                {Object.entries(stats.health_breakdown)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([health, count]) => {
+                    const pct = stats.total_projects === 0 ? 0 : (count / stats.total_projects) * 100;
+                    return (
+                      <div key={health} className="flex items-center gap-3">
+                        <div className={`w-3 h-3 rounded-full ${healthColor(health)} shrink-0`} />
+                        <div className="w-20 text-sm font-medium text-slate-700 capitalize">{health}</div>
+                        <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                          <div
+                            className="h-full bg-slate-900 rounded-full"
+                            style={{ width: `${Math.max(2, pct)}%` }}
+                          />
+                        </div>
+                        <div className="w-20 text-right text-sm text-slate-700 tabular-nums">{count}</div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Plan Breakdown ── */}
       <Card>
         <CardHeader>
           <CardTitle>Plan distribution</CardTitle>
@@ -183,12 +305,14 @@ function StatCard({
   icon: Icon,
   sub,
   warn,
+  className,
 }: {
   label: string;
   value: string;
   icon: React.ComponentType<{ className?: string }>;
   sub?: string;
   warn?: boolean;
+  className?: string;
 }) {
   return (
     <Card>
@@ -198,7 +322,7 @@ function StatCard({
           <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
           {warn && <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 text-[10px]">stub</Badge>}
         </div>
-        <div className="text-2xl font-bold text-slate-900 tabular-nums">{value}</div>
+        <div className={`text-2xl font-bold tabular-nums ${className || "text-slate-900"}`}>{value}</div>
         {sub && <div className="text-xs text-slate-500 mt-1">{sub}</div>}
       </CardContent>
     </Card>

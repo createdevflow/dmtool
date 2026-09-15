@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -34,6 +36,7 @@ type AdminHandler struct {
 	planRepo     repository.PlanRepository
 	auditRepo    repository.AdminAuditLogRepository
 	projRepo     repository.ProjectRepository
+	activityRepo repository.UserActivityRepository
 	privKey      any // *rsa.PrivateKey — kept as any to avoid a heavy import
 }
 
@@ -47,16 +50,18 @@ func NewAdminHandler(
 	planRepo repository.PlanRepository,
 	auditRepo repository.AdminAuditLogRepository,
 	projRepo repository.ProjectRepository,
+	activityRepo repository.UserActivityRepository,
 	privKey any,
 ) *AdminHandler {
 	return &AdminHandler{
-		db:        db,
-		userRepo:  userRepo,
-		subRepo:   subRepo,
-		planRepo:  planRepo,
-		auditRepo: auditRepo,
-		projRepo:  projRepo,
-		privKey:   privKey,
+		db:           db,
+		userRepo:     userRepo,
+		subRepo:      subRepo,
+		planRepo:     planRepo,
+		auditRepo:    auditRepo,
+		projRepo:     projRepo,
+		activityRepo: activityRepo,
+		privKey:      privKey,
 	}
 }
 
@@ -86,7 +91,7 @@ type adminUserSummary struct {
 }
 
 // ListUsers returns a paginated, filterable list of users. Query
-// params: page, size, search (matches email or name), plan (plan code).
+// params: page, size, search (email/name), plan, role, mode, status.
 func (h *AdminHandler) ListUsers(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if page < 1 {
@@ -98,15 +103,31 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 	}
 	search := c.Query("search")
 	planFilter := c.Query("plan")
+	roleFilter := c.Query("role")
+	modeFilter := c.Query("mode")
+	statusFilter := c.Query("status") // "active", "suspended"
 
-	// Build a base query against users + a left-join to the user's
-	// most recent subscription for plan/status. We project to
-	// adminUserSummary in Go so the shape stays stable across GORM
-	// versions and the JSON field order matches the contract.
 	q := h.db.Model(&models.User{})
 	if search != "" {
 		like := "%" + search + "%"
 		q = q.Where("users.email LIKE ? OR users.name LIKE ?", like, like)
+	}
+	if roleFilter != "" {
+		q = q.Where("users.role = ?", roleFilter)
+	}
+	if modeFilter != "" {
+		q = q.Where("users.dashboard_mode = ?", modeFilter)
+	}
+	if statusFilter == "suspended" {
+		q = q.Where("users.disabled_at IS NOT NULL")
+	} else if statusFilter == "active" {
+		q = q.Where("users.disabled_at IS NULL")
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		utils.InternalError(c, "Failed to count users")
+		return
 	}
 
 	var users []models.User
@@ -126,6 +147,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			Role:        u.Role,
 			CreatedAt:   u.CreatedAt,
 			TrialUsedAt: u.TrialUsedAt,
+			LastLoginAt: u.LastLoginAt,
 		}
 		sub, err := h.subRepo.FindLatestByUser(u.ID)
 		if err == nil && sub != nil {
@@ -138,8 +160,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		summaries = append(summaries, sum)
 	}
 
-	// Apply plan filter in Go after the lookup — the join happens
-	// per-row already, so the alternative is a more complex subquery.
+	// Apply plan filter in Go after the lookup.
 	if planFilter != "" {
 		filtered := summaries[:0]
 		for _, s := range summaries {
@@ -148,12 +169,6 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			}
 		}
 		summaries = filtered
-	}
-
-	var total int64
-	if err := h.db.Model(&models.User{}).Count(&total).Error; err != nil {
-		utils.InternalError(c, "Failed to count users")
-		return
 	}
 
 	utils.Success(c, adminListUsersResponse{
@@ -284,6 +299,155 @@ func (h *AdminHandler) ResetPassword(c *gin.Context) {
 		"temporary_password": temp,
 		"message":          "Share this with the user securely. They should change it on first login.",
 	}, nil)
+}
+
+// ── User Activity ────────────────────────────────────────────────────
+
+// GetUserActivity returns the activity timeline for a specific user.
+func (h *AdminHandler) GetUserActivity(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		utils.BadRequest(c, "Invalid user id", "INVALID_ID")
+		return
+	}
+	u, err := h.userRepo.FindByID(uint(id))
+	if err != nil || u == nil {
+		utils.NotFound(c, "User not found")
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	activities, err := h.activityRepo.ListByUser(u.ID, limit)
+	if err != nil {
+		utils.InternalError(c, "Failed to fetch activity")
+		return
+	}
+	utils.Success(c, gin.H{
+		"user_id":   u.ID,
+		"activities": activities,
+	}, nil)
+}
+
+// ── Suspend / Unsuspend ──────────────────────────────────────────────
+
+type suspendRequest struct {
+	Reason string `json:"reason"`
+}
+
+// SuspendUser soft-suspends a user by setting disabled_at.
+func (h *AdminHandler) SuspendUser(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		utils.BadRequest(c, "Invalid user id", "INVALID_ID")
+		return
+	}
+	u, err := h.userRepo.FindByID(uint(id))
+	if err != nil || u == nil {
+		utils.NotFound(c, "User not found")
+		return
+	}
+	if u.Role == models.RoleAdmin {
+		utils.BadRequest(c, "Cannot suspend admin users", "CANNOT_SUSPEND_ADMIN")
+		return
+	}
+	if u.DisabledAt != nil {
+		utils.BadRequest(c, "User is already suspended", "ALREADY_SUSPENDED")
+		return
+	}
+	var req suspendRequest
+	_ = c.ShouldBindJSON(&req)
+	now := time.Now()
+	u.DisabledAt = &now
+	u.DisabledReason = req.Reason
+	if err := h.userRepo.Update(u); err != nil {
+		utils.InternalError(c, "Failed to suspend user")
+		return
+	}
+	h.writeAudit(c, u.ID, "user.suspend", gin.H{"reason": req.Reason})
+	utils.Success(c, gin.H{
+		"user_id":      u.ID,
+		"disabled_at":  now,
+		"message":      "User suspended",
+	}, nil)
+}
+
+// UnsuspendUser reactivates a suspended user by clearing disabled_at.
+func (h *AdminHandler) UnsuspendUser(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		utils.BadRequest(c, "Invalid user id", "INVALID_ID")
+		return
+	}
+	u, err := h.userRepo.FindByID(uint(id))
+	if err != nil || u == nil {
+		utils.NotFound(c, "User not found")
+		return
+	}
+	if u.DisabledAt == nil {
+		utils.BadRequest(c, "User is not suspended", "NOT_SUSPENDED")
+		return
+	}
+	u.DisabledAt = nil
+	u.DisabledReason = ""
+	if err := h.userRepo.Update(u); err != nil {
+		utils.InternalError(c, "Failed to unsuspend user")
+		return
+	}
+	h.writeAudit(c, u.ID, "user.unsuspend", nil)
+	utils.Success(c, gin.H{
+		"user_id": u.ID,
+		"message": "User reactivated",
+	}, nil)
+}
+
+// ── User Export (CSV) ────────────────────────────────────────────────
+
+// ExportUsers returns all users as CSV. No pagination — intended for
+// admin data exports. The response is streamed as text/csv.
+func (h *AdminHandler) ExportUsers(c *gin.Context) {
+	var users []models.User
+	if err := h.db.Order("created_at DESC").Find(&users).Error; err != nil {
+		utils.InternalError(c, "Failed to export users")
+		return
+	}
+
+	c.Header("Content-Type", "text/csv")
+	c.Header("Content-Disposition", "attachment; filename=users_export.csv")
+
+	// Write CSV header
+	c.Writer.WriteString("id,email,name,role,dashboard_mode,created_at,last_login_at,login_count,disabled_at\n")
+	for _, u := range users {
+		disabledAt := ""
+		if u.DisabledAt != nil {
+			disabledAt = u.DisabledAt.Format(time.RFC3339)
+		}
+		lastLogin := ""
+		if u.LastLoginAt != nil {
+			lastLogin = u.LastLoginAt.Format(time.RFC3339)
+		}
+		line := strconv.FormatUint(uint64(u.ID), 10) + "," +
+			escapeCSV(u.Email) + "," +
+			escapeCSV(u.Name) + "," +
+			u.Role + "," +
+			u.DashboardMode + "," +
+			u.CreatedAt.Format(time.RFC3339) + "," +
+			lastLogin + "," +
+			strconv.Itoa(u.LoginCount) + "," +
+			disabledAt + "\n"
+		c.Writer.WriteString(line)
+	}
+}
+
+// escapeCSV wraps a value in quotes if it contains a comma, quote, or newline.
+func escapeCSV(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	for _, c := range s {
+		if c == ',' || c == '"' || c == '\n' {
+			return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+		}
+	}
+	return s
 }
 
 // ── Impersonation ─────────────────────────────────────────────────────
@@ -519,6 +683,291 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 	utils.Success(c, plan, nil)
 }
 
+// ── Projects (admin) ──────────────────────────────────────────────────
+
+// adminProjectSummary is the per-project row returned in the admin list.
+type adminProjectSummary struct {
+	ID          uint      `json:"id"`
+	Name        string    `json:"name"`
+	URL         string    `json:"url"`
+	UserID      uint      `json:"user_id"`
+	OwnerEmail  string    `json:"owner_email"`
+	Goal        string    `json:"goal"`
+	Status      string    `json:"status"`
+	Health      string    `json:"health"`
+	HealthScore int       `json:"health_score"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// ListProjects returns a paginated, filterable list of all projects.
+// Query params: page, size, search (name/url), goal, health, owner (user_id).
+func (h *AdminHandler) ListProjects(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "25"))
+	if size < 1 || size > 200 {
+		size = 25
+	}
+	search := c.Query("search")
+	goalFilter := c.Query("goal")
+	healthFilter := c.Query("health")
+	ownerFilter := c.Query("owner")
+
+	q := h.db.Model(&models.Project{})
+	if search != "" {
+		like := "%" + search + "%"
+		q = q.Where("projects.name LIKE ? OR projects.url LIKE ?", like, like)
+	}
+	if goalFilter != "" {
+		q = q.Where("projects.goal = ?", goalFilter)
+	}
+	if healthFilter != "" {
+		q = q.Where("projects.health = ?", healthFilter)
+	}
+	if ownerFilter != "" {
+		q = q.Where("projects.user_id = ?", ownerFilter)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		utils.InternalError(c, "Failed to count projects")
+		return
+	}
+
+	var projects []models.Project
+	if err := q.Order("projects.created_at DESC").
+		Limit(size).Offset((page - 1) * size).
+		Find(&projects).Error; err != nil {
+		utils.InternalError(c, "Failed to list projects")
+		return
+	}
+
+	// Batch-fetch owner emails for the result set.
+	userIDs := make([]uint, 0, len(projects))
+	for _, p := range projects {
+		userIDs = append(userIDs, p.UserID)
+	}
+	ownerEmails := map[uint]string{}
+	if len(userIDs) > 0 {
+		var users []models.User
+		h.db.Select("id, email").Where("id IN ?", userIDs).Find(&users)
+		for _, u := range users {
+			ownerEmails[u.ID] = u.Email
+		}
+	}
+
+	summaries := make([]adminProjectSummary, 0, len(projects))
+	for _, p := range projects {
+		summaries = append(summaries, adminProjectSummary{
+			ID:          p.ID,
+			Name:        p.Name,
+			URL:         p.URL,
+			UserID:      p.UserID,
+			OwnerEmail:  ownerEmails[p.UserID],
+			Goal:        p.Goal,
+			Status:      p.Status,
+			Health:      p.Health,
+			HealthScore: p.HealthScore,
+			CreatedAt:   p.CreatedAt,
+		})
+	}
+
+	utils.Success(c, gin.H{
+		"projects": summaries,
+		"total":    total,
+		"page":     page,
+		"size":     size,
+	}, nil)
+}
+
+// GetProject returns detailed info for a single project including
+// owner info, SEO summary, social summary, and recent insights.
+func (h *AdminHandler) GetProject(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		utils.BadRequest(c, "Invalid project id", "INVALID_ID")
+		return
+	}
+	var p models.Project
+	if err := h.db.First(&p, id).Error; err != nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	// Owner info
+	var owner models.User
+	h.db.Select("id, name, email").First(&owner, p.UserID)
+
+	// SEO summary
+	var openIssues int64
+	h.db.Model(&models.SEOIssue{}).
+		Where("project_id = ? AND resolved_at IS NULL", p.ID).
+		Count(&openIssues)
+	var criticalIssues int64
+	h.db.Model(&models.SEOIssue{}).
+		Where("project_id = ? AND resolved_at IS NULL AND severity = ?", p.ID, "high").
+		Count(&criticalIssues)
+	var keywordCount int64
+	h.db.Model(&models.KeywordResult{}).
+		Where("project_id = ?", p.ID).
+		Distinct("keyword").
+		Count(&keywordCount)
+
+	// Social summary
+	var latestSocial models.SocialMetric
+	h.db.Where("project_id = ?", p.ID).Order("recorded_at DESC").First(&latestSocial)
+
+	// Recent insights
+	var insights []models.Insight
+	h.db.Where("project_id = ?", p.ID).Order("created_at DESC").Limit(10).Find(&insights)
+
+	utils.Success(c, gin.H{
+		"project": p,
+		"owner":   owner,
+		"seo": gin.H{
+			"open_issues":    openIssues,
+			"critical_issues": criticalIssues,
+			"keyword_count":   keywordCount,
+		},
+		"social": latestSocial,
+		"insights": insights,
+	}, nil)
+}
+
+// GetProjectMetrics returns the time-series metrics for a project.
+func (h *AdminHandler) GetProjectMetrics(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		utils.BadRequest(c, "Invalid project id", "INVALID_ID")
+		return
+	}
+	var p models.Project
+	if err := h.db.First(&p, id).Error; err != nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
+	var metrics []models.Metric
+	h.db.Where("project_id = ?", p.ID).Order("date DESC").Limit(limit).Find(&metrics)
+	utils.Success(c, gin.H{
+		"project_id": p.ID,
+		"metrics":    metrics,
+	}, nil)
+}
+
+// GetProjectSEO returns SEO data for a project: issues, keywords, backlinks.
+func (h *AdminHandler) GetProjectSEO(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		utils.BadRequest(c, "Invalid project id", "INVALID_ID")
+		return
+	}
+	var p models.Project
+	if err := h.db.First(&p, id).Error; err != nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	var issues []models.SEOIssue
+	h.db.Where("project_id = ? AND resolved_at IS NULL", p.ID).
+		Order("CASE severity WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END").
+		Limit(50).Find(&issues)
+
+	var keywords []models.KeywordResult
+	h.db.Where("project_id = ?", p.ID).Order("volume DESC").Limit(50).Find(&keywords)
+
+	utils.Success(c, gin.H{
+		"project_id": p.ID,
+		"issues":     issues,
+		"keywords":   keywords,
+	}, nil)
+}
+
+// GetProjectSocial returns social data for a project.
+func (h *AdminHandler) GetProjectSocial(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		utils.BadRequest(c, "Invalid project id", "INVALID_ID")
+		return
+	}
+	var p models.Project
+	if err := h.db.First(&p, id).Error; err != nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	var socialMetrics []models.SocialMetric
+	h.db.Where("project_id = ?", p.ID).Order("recorded_at DESC").Limit(30).Find(&socialMetrics)
+
+	var latestSocial models.SocialMetric
+	h.db.Where("project_id = ?", p.ID).Order("recorded_at DESC").First(&latestSocial)
+
+	utils.Success(c, gin.H{
+		"project_id": p.ID,
+		"latest":     latestSocial,
+		"history":    socialMetrics,
+	}, nil)
+}
+
+// GetProjectStats returns platform-wide project stats for the admin overview.
+func (h *AdminHandler) GetProjectStats(c *gin.Context) {
+	var totalProjects int64
+	h.db.Model(&models.Project{}).Count(&totalProjects)
+
+	// By health
+	var healthRows []struct {
+		Health string
+		Count  int64
+	}
+	h.db.Model(&models.Project{}).
+		Select("health, count(*) as count").
+		Group("health").
+		Scan(&healthRows)
+	healthBreakdown := map[string]int64{}
+	for _, r := range healthRows {
+		healthBreakdown[r.Health] = r.Count
+	}
+
+	// By goal
+	var goalRows []struct {
+		Goal  string
+		Count int64
+	}
+	h.db.Model(&models.Project{}).
+		Select("goal, count(*) as count").
+		Group("goal").
+		Scan(&goalRows)
+	goalBreakdown := map[string]int64{}
+	for _, r := range goalRows {
+		goalBreakdown[r.Goal] = r.Count
+	}
+
+	// Avg health score
+	var avgScore float64
+	h.db.Model(&models.Project{}).
+		Where("health_score > 0").
+		Select("COALESCE(AVG(health_score), 0)").
+		Scan(&avgScore)
+
+	// Projects created in last 7/30 days
+	sevenAgo := time.Now().AddDate(0, 0, -7)
+	thirtyAgo := time.Now().AddDate(0, 0, -30)
+	var new7d, new30d int64
+	h.db.Model(&models.Project{}).Where("created_at >= ?", sevenAgo).Count(&new7d)
+	h.db.Model(&models.Project{}).Where("created_at >= ?", thirtyAgo).Count(&new30d)
+
+	utils.Success(c, gin.H{
+		"total_projects":  totalProjects,
+		"health_breakdown": healthBreakdown,
+		"goal_breakdown":   goalBreakdown,
+		"avg_health_score": avgScore,
+		"new_7d":          new7d,
+		"new_30d":         new30d,
+	}, nil)
+}
+
 // ── Audit log ─────────────────────────────────────────────────────────
 
 func (h *AdminHandler) ListAuditLog(c *gin.Context) {
@@ -566,6 +1015,14 @@ type adminStatsResponse struct {
 	PlanBreakdown    map[string]int64            `json:"plan_breakdown"`
 	UserGrowth30d    []adminUserGrowthPoint      `json:"user_growth_30d"`
 	RecentActivity   []models.AdminAuditLog      `json:"recent_activity"`
+	// Phase 3: project stats + feature adoption
+	TotalProjects   int64              `json:"total_projects"`
+	ProjectsNew7d   int64              `json:"projects_new_7d"`
+	ProjectsNew30d  int64              `json:"projects_new_30d"`
+	AvgHealthScore  float64            `json:"avg_health_score"`
+	HealthBreakdown map[string]int64   `json:"health_breakdown"`
+	GoalBreakdown   map[string]int64   `json:"goal_breakdown"`
+	FeatureAdoption map[string]float64 `json:"feature_adoption"`
 }
 
 type adminUserGrowthPoint struct {
@@ -664,7 +1121,377 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 	// Recent activity = last 20 audit log entries.
 	h.db.Order("created_at DESC").Limit(20).Find(&out.RecentActivity)
 
+	// ── Phase 3: project stats + feature adoption ──────────────────────
+	h.db.Model(&models.Project{}).Count(&out.TotalProjects)
+	h.db.Model(&models.Project{}).Where("created_at >= ?", sevenAgo).Count(&out.ProjectsNew7d)
+	h.db.Model(&models.Project{}).Where("created_at >= ?", thirtyAgo).Count(&out.ProjectsNew30d)
+
+	h.db.Model(&models.Project{}).
+		Where("health_score > 0").
+		Select("COALESCE(AVG(health_score), 0)").
+		Scan(&out.AvgHealthScore)
+
+	// Health breakdown
+	out.HealthBreakdown = map[string]int64{}
+	var healthRows []struct {
+		Health string
+		Count  int64
+	}
+	h.db.Model(&models.Project{}).
+		Select("health, count(*) as count").
+		Group("health").
+		Scan(&healthRows)
+	for _, r := range healthRows {
+		out.HealthBreakdown[r.Health] = r.Count
+	}
+
+	// Goal breakdown
+	out.GoalBreakdown = map[string]int64{}
+	var goalRows []struct {
+		Goal  string
+		Count int64
+	}
+	h.db.Model(&models.Project{}).
+		Select("goal, count(*) as count").
+		Group("goal").
+		Scan(&goalRows)
+	for _, r := range goalRows {
+		out.GoalBreakdown[r.Goal] = r.Count
+	}
+
+	// Feature adoption rates (percentage of projects using each feature)
+	out.FeatureAdoption = map[string]float64{}
+	if out.TotalProjects > 0 {
+		var seoProjects int64
+		h.db.Model(&models.Project{}).Where("goal IN ?", []string{"seo", "both"}).Count(&seoProjects)
+		out.FeatureAdoption["seo"] = float64(seoProjects) / float64(out.TotalProjects) * 100
+
+		var socialProjects int64
+		h.db.Model(&models.Project{}).Where("goal IN ?", []string{"social", "both"}).Count(&socialProjects)
+		out.FeatureAdoption["social"] = float64(socialProjects) / float64(out.TotalProjects) * 100
+
+		var usersWithIntegrations int64
+		h.db.Table("o_auth_credentials").Distinct("user_id").Count(&usersWithIntegrations)
+		var totalUsers int64
+		h.db.Model(&models.User{}).Count(&totalUsers)
+		if totalUsers > 0 {
+			out.FeatureAdoption["integrations"] = float64(usersWithIntegrations) / float64(totalUsers) * 100
+		}
+
+		var projectsWithInsights int64
+		h.db.Table("insights").Distinct("project_id").Count(&projectsWithInsights)
+		out.FeatureAdoption["ai_content"] = float64(projectsWithInsights) / float64(out.TotalProjects) * 100
+	}
+
 	utils.Success(c, out, nil)
+}
+
+// ── Platform SEO / Social Health ──────────────────────────────────────
+
+// PlatformSEOHealth returns platform-wide SEO analytics computed from
+// existing tables (projects, seo_issues, keyword_results).
+func (h *AdminHandler) PlatformSEOHealth(c *gin.Context) {
+	// SEO project count and avg health
+	var totalSEO int64
+	h.db.Model(&models.Project{}).
+		Where("goal IN ?", []string{"seo", "both"}).
+		Count(&totalSEO)
+
+	var avgHealth float64
+	h.db.Model(&models.Project{}).
+		Where("goal IN ? AND health_score > 0", []string{"seo", "both"}).
+		Select("COALESCE(AVG(health_score), 0)").
+		Scan(&avgHealth)
+
+	// Keywords
+	var totalKeywords int64
+	h.db.Table("keyword_results").
+		Where("project_id IN (SELECT id FROM projects WHERE goal IN ('seo','both'))").
+		Distinct("keyword").
+		Count(&totalKeywords)
+
+	var top10Keywords int64
+	h.db.Table("keyword_results").
+		Where("project_id IN (SELECT id FROM projects WHERE goal IN ('seo','both')) AND position > 0 AND position <= 10").
+		Distinct("keyword").
+		Count(&top10Keywords)
+
+	// SEO issues
+	var openIssues int64
+	h.db.Table("seo_issues").
+		Where("project_id IN (SELECT id FROM projects WHERE goal IN ('seo','both')) AND resolved_at IS NULL").
+		Count(&openIssues)
+
+	var criticalIssues int64
+	h.db.Table("seo_issues").
+		Where("project_id IN (SELECT id FROM projects WHERE goal IN ('seo','both')) AND resolved_at IS NULL AND severity = 'high'").
+		Count(&criticalIssues)
+
+	// Issue breakdown by category
+	issueBreakdown := map[string]int64{}
+	var issueCatRows []struct {
+		Category string
+		Count    int64
+	}
+	h.db.Table("seo_issues").
+		Where("project_id IN (SELECT id FROM projects WHERE goal IN ('seo','both')) AND resolved_at IS NULL").
+		Select("category, count(*) as count").
+		Group("category").
+		Scan(&issueCatRows)
+	for _, r := range issueCatRows {
+		issueBreakdown[r.Category] = r.Count
+	}
+
+	// Health distribution (bucket by score range)
+	healthDist := map[string]int64{}
+	var healthBucketRows []struct {
+		Bucket string
+		Count  int64
+	}
+	h.db.Raw(`
+		SELECT
+			CASE
+				WHEN health_score >= 90 THEN '90-100'
+				WHEN health_score >= 70 THEN '70-89'
+				WHEN health_score >= 50 THEN '50-69'
+				WHEN health_score > 0 THEN '0-49'
+				ELSE 'unscored'
+			END as bucket,
+			count(*) as count
+		FROM projects
+		WHERE goal IN ('seo', 'both')
+		GROUP BY bucket
+	`).Scan(&healthBucketRows)
+	for _, r := range healthBucketRows {
+		healthDist[r.Bucket] = r.Count
+	}
+
+	utils.Success(c, gin.H{
+		"total_seo_projects":  totalSEO,
+		"avg_health_score":    avgHealth,
+		"total_keywords":      totalKeywords,
+		"keywords_in_top_10":  top10Keywords,
+		"total_open_issues":   openIssues,
+		"critical_issues":     criticalIssues,
+		"issue_breakdown":     issueBreakdown,
+		"health_distribution": healthDist,
+	}, nil)
+}
+
+// PlatformSocialHealth returns platform-wide social analytics computed
+// from existing tables (projects, social_metrics).
+func (h *AdminHandler) PlatformSocialHealth(c *gin.Context) {
+	// Social project count
+	var totalSocial int64
+	h.db.Model(&models.Project{}).
+		Where("goal IN ?", []string{"social", "both"}).
+		Count(&totalSocial)
+
+	// Latest social metrics per project — sum followers, avg engagement, sum reach
+	type socialAgg struct {
+		TotalFollowers  int64
+		AvgEngagement   float64
+		TotalReach      int64
+	}
+	var agg socialAgg
+	h.db.Raw(`
+		SELECT
+			COALESCE(SUM(sm.followers), 0) as total_followers,
+			COALESCE(AVG(sm.engagement_rate), 0) as avg_engagement,
+			COALESCE(SUM(sm.reach), 0) as total_reach
+		FROM social_metrics sm
+		INNER JOIN (
+			SELECT project_id, MAX(recorded_at) as max_recorded
+			FROM social_metrics
+			GROUP BY project_id
+		) latest ON sm.project_id = latest.project_id AND sm.recorded_at = latest.max_recorded
+	`).Scan(&agg)
+
+	// Platform breakdown
+	platformBreakdown := map[string]int64{}
+	var platformRows []struct {
+		Platform string
+		Count    int64
+	}
+	h.db.Raw(`
+		SELECT sm.platform, count(DISTINCT sm.project_id) as count
+		FROM social_metrics sm
+		INNER JOIN (
+			SELECT project_id, MAX(recorded_at) as max_recorded
+			FROM social_metrics
+			GROUP BY project_id
+		) latest ON sm.project_id = latest.project_id AND sm.recorded_at = latest.max_recorded
+		GROUP BY sm.platform
+	`).Scan(&platformRows)
+	for _, r := range platformRows {
+		platformBreakdown[r.Platform] = r.Count
+	}
+
+	// Status breakdown
+	statusBreakdown := map[string]int64{}
+	var statusRows []struct {
+		Status string
+		Count  int64
+	}
+	h.db.Raw(`
+		SELECT sm.status, count(DISTINCT sm.project_id) as count
+		FROM social_metrics sm
+		INNER JOIN (
+			SELECT project_id, MAX(recorded_at) as max_recorded
+			FROM social_metrics
+			GROUP BY project_id
+		) latest ON sm.project_id = latest.project_id AND sm.recorded_at = latest.max_recorded
+		GROUP BY sm.status
+	`).Scan(&statusRows)
+	for _, r := range statusRows {
+		statusBreakdown[r.Status] = r.Count
+	}
+
+	// Top 5 projects by followers
+	type topProject struct {
+		ProjectID      uint    `json:"project_id"`
+		Name           string  `json:"name"`
+		URL            string  `json:"url"`
+		OwnerEmail     string  `json:"owner_email"`
+		Platform       string  `json:"platform"`
+		Followers      int64   `json:"followers"`
+		EngagementRate float64 `json:"engagement_rate"`
+		Reach          int64   `json:"reach"`
+	}
+	var topProjects []topProject
+	h.db.Raw(`
+		SELECT
+			sm.project_id, p.name, p.url,
+			COALESCE(u.email, '') as owner_email,
+			sm.platform, sm.followers, sm.engagement_rate, sm.reach
+		FROM social_metrics sm
+		JOIN projects p ON p.id = sm.project_id
+		LEFT JOIN users u ON u.id = p.user_id
+		INNER JOIN (
+			SELECT project_id, MAX(recorded_at) as max_recorded
+			FROM social_metrics
+			GROUP BY project_id
+		) latest ON sm.project_id = latest.project_id AND sm.recorded_at = latest.max_recorded
+		ORDER BY sm.followers DESC
+		LIMIT 5
+	`).Scan(&topProjects)
+
+	utils.Success(c, gin.H{
+		"total_social_projects": totalSocial,
+		"total_followers":      agg.TotalFollowers,
+		"avg_engagement_rate":  agg.AvgEngagement,
+		"total_reach":          agg.TotalReach,
+		"platform_breakdown":   platformBreakdown,
+		"status_breakdown":     statusBreakdown,
+		"top_projects":         topProjects,
+	}, nil)
+}
+
+// ── System Health & Integrations ──────────────────────────────────────
+
+// PlatformHealth returns system health status by checking database
+// connectivity, server uptime, and recording the check.
+func (h *AdminHandler) PlatformHealth(c *gin.Context) {
+	// Check database
+	dbStatus := "healthy"
+	dbLatency := 0
+	start := time.Now()
+	if err := h.db.Raw("SELECT 1").Error; err != nil {
+		dbStatus = "down"
+	} else {
+		dbLatency = int(time.Since(start).Milliseconds())
+	}
+
+	// Check OAuth credentials health
+	oauthStatus := "healthy"
+	var totalCreds int64
+	h.db.Table("o_auth_credentials").Count(&totalCreds)
+	var expiredCreds int64
+	h.db.Table("o_auth_credentials").Where("is_expired = ?", true).Count(&expiredCreds)
+	if expiredCreds > 0 && totalCreds > 0 {
+		oauthStatus = "degraded"
+	}
+
+	// Check projects health
+	projectStatus := "healthy"
+	var projectsWithIssues int64
+	h.db.Table("projects").Where("health = ?", "issues").Count(&projectsWithIssues)
+	var totalProjects int64
+	h.db.Model(&models.Project{}).Count(&totalProjects)
+	if totalProjects > 0 && float64(projectsWithIssues)/float64(totalProjects) > 0.5 {
+		projectStatus = "degraded"
+	}
+
+	// Record health check
+	h.db.Create(&models.SystemHealth{
+		CheckedAt: time.Now(),
+		Service:   "api",
+		Status:    "healthy",
+		LatencyMs: dbLatency,
+		Metadata:  datatypes.JSON(`{"db":"` + dbStatus + `"}`),
+	})
+
+	utils.Success(c, gin.H{
+		"status": "healthy",
+		"services": gin.H{
+			"api_server": gin.H{
+				"status":  "healthy",
+				"latency": "<1ms",
+			},
+			"database": gin.H{
+				"status":  dbStatus,
+				"latency": fmt.Sprintf("%dms", dbLatency),
+			},
+			"oauth_integrations": gin.H{
+				"status":      oauthStatus,
+				"total":       totalCreds,
+				"expired":     expiredCreds,
+			},
+			"projects": gin.H{
+				"status":       projectStatus,
+				"with_issues":  projectsWithIssues,
+				"total":        totalProjects,
+			},
+		},
+	}, nil)
+}
+
+// IntegrationsStatus returns the status of all OAuth integrations
+// across the platform — which providers are connected, how many users
+// have active credentials, and any sync errors.
+func (h *AdminHandler) IntegrationsStatus(c *gin.Context) {
+	// Count credentials per provider
+	type providerStats struct {
+		Provider     string `json:"provider"`
+		Total        int64  `json:"total"`
+		Expired      int64  `json:"expired"`
+		SyncErrors   int64  `json:"sync_errors"`
+		LastSyncedAt *time.Time `json:"last_synced_at"`
+	}
+
+	var stats []providerStats
+	h.db.Table("o_auth_credentials").
+		Select("provider, count(*) as total, sum(case when is_expired then 1 else 0 end) as expired, sum(case when sync_error != '' then 1 else 0 end) as sync_errors, max(last_synced_at) as last_synced_at").
+		Group("provider").
+		Scan(&stats)
+
+	// Overall stats
+	var totalConnections int64
+	h.db.Table("o_auth_credentials").Count(&totalConnections)
+	var activeConnections int64
+	h.db.Table("o_auth_credentials").Where("is_expired = ?", false).Count(&activeConnections)
+	var uniqueUsers int64
+	h.db.Table("o_auth_credentials").Distinct("user_id").Count(&uniqueUsers)
+	var uniqueProjects int64
+	h.db.Table("o_auth_credentials").Distinct("project_id").Count(&uniqueProjects)
+
+	utils.Success(c, gin.H{
+		"total_connections":  totalConnections,
+		"active_connections": activeConnections,
+		"unique_users":       uniqueUsers,
+		"unique_projects":    uniqueProjects,
+		"providers":          stats,
+	}, nil)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────

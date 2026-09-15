@@ -63,8 +63,10 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 
 	metricsCurrent, _ := h.metricRepo.FindMetricsByProjectAndRange(pid, t30, t0)
 	metricsPrevious, _ := h.metricRepo.FindMetricsByProjectAndRange(pid, t60, t30)
+	metricsCurrent = gscOnly(metricsCurrent)
+	metricsPrevious = gscOnly(metricsPrevious)
 
-	// 3. Compute web traffic stats from real data
+	// 3. Compute web traffic stats from GSC only (seed/dataforseo ignored)
 	var currClicks, prevClicks, currImpressions, prevImpressions int64
 	for _, m := range metricsCurrent {
 		currClicks += m.Clicks
@@ -73,6 +75,10 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 	for _, m := range metricsPrevious {
 		prevClicks += m.Clicks
 		prevImpressions += m.Impressions
+	}
+	trafficSource := ""
+	if len(metricsCurrent) > 0 || len(metricsPrevious) > 0 {
+		trafficSource = models.MetricSourceGSC
 	}
 
 	clickChange := utils.CalculateChange(currClicks, prevClicks)
@@ -141,24 +147,25 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 	socialMetrics, _ := h.metricRepo.FindLatestSocialMetrics(pid)
 	var latestFollowers, totalReach int64
 	var totalEngRate float64
-	isSimulated := false
+	liveSocial := 0
 
 	for _, sm := range socialMetrics {
+		if sm.IsSimulated {
+			continue
+		}
+		liveSocial++
 		latestFollowers += sm.Followers
 		totalReach += sm.Reach
 		totalEngRate += sm.Engagement
-		if sm.IsSimulated {
-			isSimulated = true
-		}
 	}
 	var avgEngRate float64
-	if len(socialMetrics) > 0 {
-		avgEngRate = totalEngRate / float64(len(socialMetrics))
+	if liveSocial > 0 {
+		avgEngRate = totalEngRate / float64(liveSocial)
 	}
 
 	// Content score = engagement rate mapped to 0-10 scale (industry avg ~3.5%)
 	contentScore := math.Min(10.0, avgEngRate/3.5*8.0)
-	if contentScore == 0 && len(socialMetrics) > 0 {
+	if contentScore == 0 && liveSocial > 0 {
 		contentScore = 5.0 // default if we have social data but 0 engagement
 	}
 
@@ -230,12 +237,13 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 	}
 
 	utils.Success(c, gin.H{
-		"project":       project,
-		"websiteStats":  websiteStats,
-		"socialStats":   socialStats,
-		"combinedStats": combinedStats,
-		"health_score":  project.HealthScore,
-		"is_simulated":  isSimulated,
+		"project":        project,
+		"websiteStats":   websiteStats,
+		"socialStats":    socialStats,
+		"combinedStats":  combinedStats,
+		"health_score":   project.HealthScore,
+		"is_simulated":   false,
+		"traffic_source": trafficSource,
 	}, nil)
 }
 
@@ -260,7 +268,7 @@ func (h *DashboardHandler) Metrics(c *gin.Context) {
 		return
 	}
 
-	utils.Success(c, metrics, nil)
+	utils.Success(c, gscOnly(metrics), nil)
 }
 
 func (h *DashboardHandler) Insights(c *gin.Context) {
@@ -356,8 +364,10 @@ func (h *DashboardHandler) Traffic(c *gin.Context) {
 		utils.InternalError(c, "Failed to fetch traffic metrics")
 		return
 	}
-	
+	metrics = gscOnly(metrics)
+
 	prevMetrics, _ := h.metricRepo.FindMetricsByProjectAndRange(uint(projectID), prevStart.Format("2006-01-02"), start.Format("2006-01-02"))
+	prevMetrics = gscOnly(prevMetrics)
 
 	var currClicks, prevClicks, currImpressions, prevImpressions int64
 	
@@ -410,6 +420,16 @@ func (h *DashboardHandler) Alerts(c *gin.Context) {
 	// Alert system is populated by background workers after real syncs.
 	// Return an empty slice until the first sync creates real alerts.
 	utils.Success(c, []gin.H{}, nil)
+}
+
+func gscOnly(in []models.Metric) []models.Metric {
+	out := make([]models.Metric, 0, len(in))
+	for _, m := range in {
+		if m.Source == models.MetricSourceGSC {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // ── Computation helpers ────────────────────────────────────────────────────

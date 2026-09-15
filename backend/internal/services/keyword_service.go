@@ -101,14 +101,12 @@ func (s *keywordService) FetchAutocompleteKeywords(seed string) ([]models.Keywor
 			continue
 		}
 		seen[kw] = true
-		vol := estimateVolumeFromKW(kw)
-		kd := estimateKD(kw, vol)
 		results = append(results, models.KeywordResult{
 			Seed:     seed,
 			Keyword:  kw,
-			Volume:   vol,
-			KD:       kd,
-			Position: 0, // no GSC = no real position
+			Volume:   0,
+			KD:       0,
+			Position: 0,
 		})
 	}
 
@@ -121,13 +119,11 @@ func (s *keywordService) FetchAutocompleteKeywords(seed string) ([]models.Keywor
 				continue
 			}
 			seen[kw] = true
-			vol := estimateVolumeFromKW(kw)
-			kd := estimateKD(kw, vol)
 			results = append(results, models.KeywordResult{
 				Seed:     seed,
 				Keyword:  kw,
-				Volume:   vol,
-				KD:       kd,
+				Volume:   0,
+				KD:       0,
 				Position: 0,
 			})
 			if len(results) >= 30 {
@@ -186,23 +182,6 @@ func (s *keywordService) fetchGoogleSuggest(query string) []string {
 	return suggestions
 }
 
-// estimateVolumeFromKW heuristically estimates monthly search volume based on
-// keyword length and word count. Short, generic keywords = higher volume.
-func estimateVolumeFromKW(kw string) int {
-	words := len(strings.Fields(kw))
-	chars := len(kw)
-	switch {
-	case words <= 1 && chars <= 8:
-		return 50000 + (int(hashString(kw)) % 100000)
-	case words <= 2:
-		return 5000 + (int(hashString(kw)) % 30000)
-	case words <= 3:
-		return 500 + (int(hashString(kw)) % 5000)
-	default:
-		return 50 + (int(hashString(kw)) % 500)
-	}
-}
-
 // estimateKD heuristically estimates keyword difficulty (0-100).
 // High volume + short keyword = high difficulty.
 func estimateKD(kw string, volume int) int {
@@ -231,13 +210,4 @@ func estimateKD(kw string, volume int) int {
 		base = 95
 	}
 	return base
-}
-
-// hashString returns a deterministic uint64 from a string.
-func hashString(s string) uint64 {
-	var h uint64 = 5381
-	for _, c := range s {
-		h = ((h << 5) + h) + uint64(c)
-	}
-	return h
 }

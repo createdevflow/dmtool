@@ -21,7 +21,7 @@ import (
 func TestAuthUpdateMe_RoundTrip(t *testing.T) {
 	database, userRepo, _ := newAuthHarness(t)
 	authHandler := NewAuthHandler(
-		userRepo, nil, nil, nil,
+		database, userRepo, nil, nil, nil, nil,
 		nil, nil,
 		[]byte("01234567890123456789012345678901"),
 		&config.Config{},
@@ -78,7 +78,7 @@ func TestAuthUpdateMe_RoundTrip(t *testing.T) {
 func TestAuthUpdateMe_RejectsBadValue(t *testing.T) {
 	database, userRepo, _ := newAuthHarness(t)
 	authHandler := NewAuthHandler(
-		userRepo, nil, nil, nil,
+		database, userRepo, nil, nil, nil, nil,
 		nil, nil,
 		[]byte("01234567890123456789012345678901"),
 		&config.Config{},
@@ -112,7 +112,7 @@ func TestAuthUpdateMe_RejectsBadValue(t *testing.T) {
 func TestAuthMe_DefaultDashboardMode(t *testing.T) {
 	database, userRepo, _ := newAuthHarness(t)
 	authHandler := NewAuthHandler(
-		userRepo, nil, nil, nil,
+		database, userRepo, nil, nil, nil, nil,
 		nil, nil,
 		[]byte("01234567890123456789012345678901"),
 		&config.Config{},

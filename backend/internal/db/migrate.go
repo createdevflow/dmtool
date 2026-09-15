@@ -36,6 +36,8 @@ func RunMigrations(database *gorm.DB) error {
 		&models.UserPreference{},
 		&models.Subscription{},
 		&models.AdminAuditLog{},
+		&models.UserActivity{},
+		&models.SystemHealth{},
 	}
 
 	migrator := database.Migrator()
@@ -57,6 +59,10 @@ func RunMigrations(database *gorm.DB) error {
 	if err := addUserDashboardModeColumn(migrator); err != nil {
 		return err
 	}
+	// Phase 1: admin user management columns.
+	if err := addAdminUserColumns(migrator); err != nil {
+		return err
+	}
 
 	// Idempotent seed. Re-runs are no-ops because we use ON CONFLICT.
 	return SeedPlans(database)
@@ -74,6 +80,32 @@ func addUserDashboardModeColumn(migrator gorm.Migrator) error {
 		return err
 	}
 	log.Println("[migrate] added column users.dashboard_mode (default 'combined')")
+	return nil
+}
+
+// addAdminUserColumns adds Phase 1 admin columns to users if missing:
+// disabled_at, disabled_reason, last_login_at, login_count.
+func addAdminUserColumns(migrator gorm.Migrator) error {
+	if !migrator.HasTable("users") {
+		return nil
+	}
+	cols := []struct {
+		field string
+		col   string
+	}{
+		{"DisabledAt", "disabled_at"},
+		{"DisabledReason", "disabled_reason"},
+		{"LastLoginAt", "last_login_at"},
+		{"LoginCount", "login_count"},
+	}
+	for _, c := range cols {
+		if !migrator.HasColumn(&models.User{}, c.col) {
+			if err := migrator.AddColumn(&models.User{}, c.field); err != nil {
+				return err
+			}
+			log.Printf("[migrate] added column users.%s\n", c.col)
+		}
+	}
 	return nil
 }
 

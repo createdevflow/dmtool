@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -16,18 +16,17 @@ import {
   Target,
   MessageSquare,
   PenTool,
-  ImageIcon,
-  Link as LinkIcon,
-  Crosshair,
   ChevronDown,
   ChevronRight,
   Globe,
   CreditCard,
   Blocks,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardMode, type Mode } from "./dashboard-mode-context";
 import { ModeSwitcher } from "./mode-switcher";
+import { readCookie, COOKIE_USER } from "@/lib/auth-cookie";
 
 // ────────────────────────────────────────────────────────────────────────
 // Nav data — single source of truth for both the desktop Sidebar, the
@@ -58,22 +57,9 @@ export type NavGroup = {
   items: NavItem[];
 };
 
-// Curated-subset design (the agreed spec):
-//
-//   SEARCHMODE  →  Dashboard (1) + SEO Intelligence (4) +
-//                  AI Engine (3) + Account (3)    = 11 items, 4 groups
-//   SOCIALMODE  →  Dashboard (1) + Social Media (4) +
-//                  AI Engine (3) + Account (3)    = 11 items, 4 groups
-//   COMBINED    →  Dashboard (3 — drop Backlinks) +
-//                  Social (3 — drop Profile Discovery) +
-//                  AI Engine (3) + Account (3)    = 13 items, 5 groups
-//
-// Items hidden from the sidebar move into per-mode overview
-// SectionTabs drill-downs (built in a later phase):
-//   * Backlink Analysis       → Site Explorer drill-down
-//   * Profile Discovery       → Profile Analyzer drill-down
-//   * AI Insights / Action Center / Alerts / Custom Reports
-//                              → overview pages per mode
+// Honesty sprint Day 1–2: Backlink Analysis, Visual AI, and Profile
+// Discovery are omitted from navGroups (command menu follows this list).
+// Routes still exist as honest-empty pages. Rank Tracking stays.
 //
 // Notes:
 //   * Settings points at /projects/settings — that's the only Settings
@@ -97,14 +83,6 @@ export const navGroups: NavGroup[] = [
     items: [
       { name: "Site Explorer", href: "/seo/site-explorer", icon: Globe },
       { name: "Keyword Research", href: "/seo/keywords", icon: Search },
-      {
-        name: "Backlink Analysis",
-        href: "/seo/backlinks",
-        icon: LinkIcon,
-        // Search only: Backlink Analysis moves to Site Explorer
-        // drill-down / SectionTabs for Combined users.
-        modeExtras: ["search"],
-      },
       { name: "Rank Tracking", href: "/seo/rank-tracking", icon: TrendingUp },
     ],
   },
@@ -116,13 +94,6 @@ export const navGroups: NavGroup[] = [
       { name: "Profile Analyzer", href: "/social/profile-analyzer", icon: Users },
       { name: "Content Analytics", href: "/social/insights", icon: BarChart3 },
       { name: "Growth Tracking", href: "/social/growth", icon: Target },
-      {
-        name: "Profile Discovery",
-        href: "/social/competitors",
-        icon: Crosshair,
-        // Social only: moves to Profile Analyzer drill-down for Combined.
-        modeExtras: ["social"],
-      },
     ],
   },
   {
@@ -132,7 +103,6 @@ export const navGroups: NavGroup[] = [
     items: [
       { name: "AI Chat Assistant", href: "/ai/chat", icon: MessageSquare },
       { name: "Content Generator", href: "/ai/content", icon: PenTool },
-      { name: "Visual AI", href: "/ai/visual", icon: ImageIcon },
     ],
   },
   {
@@ -149,6 +119,19 @@ export const navGroups: NavGroup[] = [
   },
 ];
 
+// Helper to check if current user is admin
+function getUserRole(): string | null {
+  if (typeof document === "undefined") return null;
+  const raw = readCookie(COOKIE_USER);
+  if (!raw) return null;
+  try {
+    const user = JSON.parse(raw);
+    return user?.role ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // SidebarNav — renders the nav content only (no outer container). Both
 // the fixed desktop Sidebar and the mobile-Sheet Sidebar wrap this.
@@ -162,6 +145,8 @@ export const navGroups: NavGroup[] = [
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { mode } = useDashboardMode();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
@@ -188,6 +173,10 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       ),
     }))
     .filter((group) => group.items.length > 0);
+
+  // document.cookie is empty during SSR — wait until mount so the Admin
+  // link cannot mismatch hydration.
+  const isAdmin = mounted && getUserRole() === "admin";
 
   return (
     <div className="flex flex-1 flex-col overflow-y-auto subtle-scrollbar space-y-4">
@@ -234,6 +223,25 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         );
       })}
+
+      {/* Admin link — only visible to admin users */}
+      {isAdmin && (
+        <div className="space-y-1 pt-2 border-t border-slate-100">
+          <Link
+            href="/admin"
+            onClick={onNavigate}
+            className={cn(
+              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+              pathname.startsWith("/admin")
+                ? "bg-slate-900 text-white"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+            )}
+          >
+            <Shield className="w-4 h-4 shrink-0" />
+            <span className="flex-1 truncate">Admin Panel</span>
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

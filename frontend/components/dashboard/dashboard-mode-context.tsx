@@ -36,21 +36,6 @@ interface DashboardModeContextValue {
 
 const DashboardModeContext = createContext<DashboardModeContextValue | null>(null);
 
-function readCookieMode(): Mode {
-  if (typeof document === "undefined") return "combined";
-  for (const part of document.cookie.split(";")) {
-    const trimmed = part.trim();
-    const prefix = `${COOKIE_MODE}=`;
-    if (trimmed.startsWith(prefix)) {
-      const v = decodeURIComponent(trimmed.slice(prefix.length));
-      if (v === "search" || v === "social" || v === "combined") {
-        return v;
-      }
-    }
-  }
-  return "combined";
-}
-
 function writeCookieMode(value: Mode): void {
   if (typeof document === "undefined") return;
   // Same shape as other auth cookies: SameSite=Lax, Path=/. 30-day TTL.
@@ -58,12 +43,17 @@ function writeCookieMode(value: Mode): void {
   document.cookie = `${COOKIE_MODE}=${value}; Path=/; SameSite=Lax; Expires=${expires}`;
 }
 
-export function DashboardModeProvider({ children }: { children: ReactNode }) {
-  // Synchronously read the cookie; default to "combined" if absent.
-  const [mode, setModeState] = useState<Mode>(() => readCookieMode());
-  // `ready` flips true after the first server-side hydration attempt.
-  // Until then, children render with the cookie-derived value, which
-  // is always at least as fresh as the server knows.
+export function DashboardModeProvider({
+  children,
+  initialMode = "combined",
+}: {
+  children: ReactNode;
+  initialMode?: Mode;
+}) {
+  // Must match SSR. Reading document.cookie here used to default the
+  // server to "combined" while the client used dmtool_mode (e.g. search),
+  // which hydrated the mode switcher and nav groups with different trees.
+  const [mode, setModeState] = useState<Mode>(initialMode);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {

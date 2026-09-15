@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import {
   Search, Zap, Loader2, RefreshCw, Download,
-  TrendingUp, TrendingDown, Minus, Database, Globe
+  TrendingUp, Minus, Database, Globe
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,11 +13,15 @@ import { useState, useEffect } from "react";
 import { dashboardApi } from "@/lib/api-client";
 
 const difficultyBadge = (kd: number) => {
+  if (!kd) return "border-slate-200 text-slate-400 bg-slate-50";
   if (kd >= 60) return "border-rose-200 text-rose-600 bg-rose-50";
   if (kd >= 35) return "border-amber-200 text-amber-600 bg-amber-50";
   return "border-emerald-200 text-emerald-600 bg-emerald-50";
 };
-const difficultyLabel = (kd: number) => kd >= 60 ? "Hard" : kd >= 35 ? "Medium" : "Easy";
+const difficultyLabel = (kd: number) => {
+  if (!kd) return "—";
+  return kd >= 60 ? "Hard" : kd >= 35 ? "Medium" : "Easy";
+};
 
 const formatVolume = (vol: number) => {
   if (vol >= 1_000_000) return `${(vol / 1_000_000).toFixed(1)}M`;
@@ -96,9 +100,9 @@ export default function KeywordsPage() {
   };
 
   const filtered = keywords.filter((k: any) => {
-    if (filter === "easy")   return k.kd < 35;
+    if (filter === "easy") return k.kd > 0 && k.kd < 35;
     if (filter === "medium") return k.kd >= 35 && k.kd < 60;
-    if (filter === "hard")   return k.kd >= 60;
+    if (filter === "hard") return k.kd >= 60;
     return true;
   });
 
@@ -222,20 +226,26 @@ export default function KeywordsPage() {
                           )}
                         </td>
                         <td className="py-4">
-                          <Badge variant="outline" className={`${difficultyBadge(kw.kd)} text-[10px] font-bold`}>
-                            {difficultyLabel(kw.kd)} ({kw.kd})
-                          </Badge>
+                          {kw.kd > 0 ? (
+                            <Badge variant="outline" className={`${difficultyBadge(kw.kd)} text-[10px] font-bold`}>
+                              {difficultyLabel(kw.kd)} ({kw.kd})
+                            </Badge>
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
                         </td>
                         <td className={`py-4 font-bold ${hasPosition ? positionColor : "text-slate-300"}`}>
                           {hasPosition ? `#${Math.round(kw.position)}` : "—"}
                         </td>
                         <td className="py-4 pr-6">
-                          {kw.volume > 10000 ? (
-                            <TrendingUp className="w-4 h-4 text-emerald-500" />
-                          ) : kw.volume < 500 ? (
-                            <TrendingDown className="w-4 h-4 text-slate-300" />
+                          {kw.volume ? (
+                            kw.volume > 10000 ? (
+                              <TrendingUp className="w-4 h-4 text-emerald-500" />
+                            ) : (
+                              <Minus className="w-4 h-4 text-amber-400" />
+                            )
                           ) : (
-                            <Minus className="w-4 h-4 text-amber-400" />
+                            <span className="text-slate-300">—</span>
                           )}
                         </td>
                       </motion.tr>

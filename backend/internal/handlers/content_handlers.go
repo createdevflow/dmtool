@@ -36,7 +36,7 @@ func NewContentHandler(
 }
 
 type ContentRequest struct {
-	ProjectID uint   `json:"project_id" binding:"required"`
+	ProjectID uint   `json:"project_id"`
 	Topic     string `json:"topic" binding:"required"`
 	Platform  string `json:"platform" binding:"required"` // instagram | twitter | linkedin | blog | email | facebook
 	Tone      string `json:"tone"`                         // professional | casual | persuasive | witty | informative
@@ -50,6 +50,11 @@ func (h *ContentHandler) Generate(c *gin.Context) {
 	var req ContentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationError(c, err)
+		return
+	}
+
+	if req.ProjectID == 0 {
+		utils.NotFound(c, "Project not found")
 		return
 	}
 

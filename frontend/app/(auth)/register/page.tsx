@@ -7,12 +7,13 @@ import { motion } from "framer-motion";
 import { Activity, ArrowRight, AlertCircle, Sparkles, Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { authApi } from "@/lib/api-client";
+import { setToken, setUser } from "@/lib/auth-cookie";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("+91 "); // Pre-filled country code
+  const [phone, setPhone] = useState("+91 ");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -31,12 +32,12 @@ export default function RegisterPage() {
     try {
       const res = await authApi.register({ name, email, password });
       const { token, user } = res.data.data;
-      localStorage.setItem("dmtool_token", token);
-      localStorage.setItem("dmtool_user", JSON.stringify(user));
+      // Phase 3: single source of truth is the cookie (see lib/auth-cookie.ts).
+      // Mirror to localStorage is intentionally NOT done — see the
+      // comment in app/(auth)/login/page.tsx for the rationale.
+      setToken(token);
+      setUser(user);
       router.push("/onboarding");
-
-
-
     } catch (err: any) {
       const errorData = err.response?.data?.error;
       const errorMessage = typeof errorData === 'object' ? errorData.message : errorData;

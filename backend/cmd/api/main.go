@@ -19,8 +19,10 @@ import (
 	"backend/internal/db"
 	"backend/internal/handlers"
 	"backend/internal/middleware"
+	"backend/internal/models"
 	"backend/internal/repository"
 	"backend/internal/services"
+	"backend/internal/services/entitlements"
 	"backend/internal/utils"
 	"backend/internal/workers"
 
@@ -33,6 +35,11 @@ import (
 func main() {
 	// ── 1. Load configuration ───────────────────────────────────────────────
 	cfg := config.Load()
+
+	// Propagate APP_ENV to the OS environment so middleware (rate limiter,
+	// etc.) can read it via os.Getenv — viper's internal state is not
+	// visible to os.Getenv.
+	os.Setenv("APP_ENV", cfg.AppEnv)
 
 	// ── 2. Parse RS256 key pair ─────────────────────────────────────────────
 	privateKey, publicKey := loadRSAKeys(cfg)
@@ -50,6 +57,14 @@ func main() {
 	seoRepo := repository.NewSEORepository(database)
 	insightRepo := repository.NewInsightRepository(database)
 	taskRepo := repository.NewTaskRepository(database)
+	subscriptionRepo := repository.NewSubscriptionRepository(database)
+	planRepo := repository.NewPlanRepository(database)
+	auditRepo := repository.NewAdminAuditLogRepository(database)
+	prefRepo := repository.NewUserPreferenceRepository(database)
+	activityRepo := repository.NewUserActivityRepository(database)
+
+	entitlementsSvc := entitlements.New(database, subscriptionRepo, planRepo, projectRepo)
+
 
 	encKey := utils.EncryptionKeyFromString(cfg.EncryptionKey)
 
@@ -109,7 +124,7 @@ func main() {
 	// ── 5. Start background workers ─────────────────────────────────────────
 	go workers.StartMetricsSyncer(database, projectRepo, metricRepo, oauthRepo, gscService, metaService, encKey, cfg)
 	go workers.StartCalendarPublisher(taskRepo, projectRepo, oauthRepo, metaService, linkedinService, encKey, cfg)
-	go workers.StartHealthScorer(database, projectRepo, seoRepo)
+	go workers.StartHealthScorer(projectRepo, crawlerService)
 	go workers.StartInsightGenerator(database, projectRepo, metricRepo, insightRepo, openaiService, cfg)
 
 	// ── 6. Build Gin router ─────────────────────────────────────────────────
@@ -147,26 +162,35 @@ func main() {
 	// Public SEO audit (no auth required — for landing page demo)
 	seoHandlerPublic := handlers.NewSEOHandler(projectRepo, seoRepo, oauthRepo, dataForSEOService, crawlerService, keywordService, encKey)
 	r.GET("/api/public/seo-audit", seoHandlerPublic.PublicAudit)
-
-	// ── 8. Auth routes (public, with strict rate limit) ──────────────────────
 	authGroup := r.Group("/api/auth")
 	authGroup.Use(middleware.RateLimitAuth())
-	registerAuthRoutes(authGroup, database, userRepo, tokenRepo, projectRepo, privateKey, publicKey, encKey, cfg)
+	registerAuthRoutes(authGroup, database, userRepo, tokenRepo, projectRepo, subscriptionRepo, activityRepo, privateKey, publicKey, encKey, cfg)
+
+	// Public plans endpoint (no auth — pricing page)
+	r.GET("/api/plans", handlers.NewPlansHandler(planRepo).List)
+
 
 	// ── 9. Protected API routes ──────────────────────────────────────────────
 	api := r.Group("/api")
 	api.Use(middleware.JWTAuth(publicKey))
+	api.Use(middleware.RejectDisabled(userRepo))
 
-	registerProjectRoutes(api, projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOService, rapidAPIService, crawlerService)
+	registerProjectRoutes(api, projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOService, rapidAPIService, crawlerService, entitlementsSvc)
 	registerDashboardRoutes(api, projectRepo, metricRepo, insightRepo, seoRepo, taskRepo)
 	registerSEORoutes(api, projectRepo, seoRepo, oauthRepo, dataForSEOService, crawlerService, keywordService, encKey)
 	registerSocialRoutes(api, projectRepo, oauthRepo, metricRepo, rapidAPIService, socialScraperService, metaService, linkedinService, cfg.MetaPageAccessToken, os.Getenv("LINKEDIN_ACCESS_TOKEN"), encKey)
 	registerContentRoutes(api, projectRepo, insightRepo, openaiService, cfg)
 	registerTaskRoutes(api, insightRepo)
 	registerSystemRoutes(api, projectRepo, taskRepo, cfg)
-	registerSyncRoutes(api, projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOService, rapidAPIService, crawlerService, gscService, metaService, encKey)
+	registerSyncRoutes(api, projectRepo, metricRepo, oauthRepo, seoRepo, gscService, metaService, linkedinService, keywordService, crawlerService, encKey, cfg.MetaPageAccessToken, os.Getenv("LINKEDIN_ACCESS_TOKEN"))
 	registerIntegrationRoutes(api, projectRepo, oauthRepo, gscOAuthConfig, metaOAuthConfig, linkedinOAuthConfig, encKey, cfg)
-
+	registerBillingRoutes(api, database, userRepo, subscriptionRepo, planRepo, projectRepo, entitlementsSvc)
+	registerAdminRoutes(api, database, userRepo, subscriptionRepo, planRepo, auditRepo, projectRepo, activityRepo, privateKey)
+	r.POST("/api/billing/webhook", handlers.NewBillingHandler(database, userRepo, subscriptionRepo, planRepo, projectRepo, entitlementsSvc).Webhook)
+	// User preferences (phase 3): read/update dashboard_mode.
+	prefsHandler := handlers.NewPreferencesHandler(prefRepo)
+	api.GET("/users/me/preferences", prefsHandler.Get)
+	api.PATCH("/users/me/preferences", prefsHandler.UpdateMode)
 	// ── 10. Start server ─────────────────────────────────────────────────────
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	log.Printf("🚀 DMTool v%s starting on %s [%s mode]", cfg.Version, addr, cfg.AppEnv)
@@ -223,26 +247,116 @@ func loadRSAKeys(cfg *config.Config) (*rsa.PrivateKey, *rsa.PublicKey) {
 
 // ── Route registration ──────────────────────────────────────────────────────
 
-func registerAuthRoutes(g *gin.RouterGroup, _ *gorm.DB,
+func registerAuthRoutes(g *gin.RouterGroup, db *gorm.DB,
 	userRepo repository.UserRepository,
 	tokenRepo repository.RefreshTokenRepository,
 	projectRepo repository.ProjectRepository,
+	subscriptionRepo repository.SubscriptionRepository,
+	activityRepo repository.UserActivityRepository,
 	privKey *rsa.PrivateKey, pubKey *rsa.PublicKey,
 	encKey []byte, cfg *config.Config) {
 
-	h := handlers.NewAuthHandler(userRepo, tokenRepo, projectRepo, privKey, pubKey, encKey, cfg)
+	h := handlers.NewAuthHandler(db, userRepo, tokenRepo, projectRepo, subscriptionRepo, activityRepo, privKey, pubKey, encKey, cfg)
 
 	g.POST("/register", h.Register)
 	g.POST("/login", h.Login)
 	g.POST("/refresh", h.Refresh)
 	g.POST("/logout", h.Logout)
-	g.GET("/me", middleware.JWTAuth(pubKey), h.Me)
+	g.GET("/me", middleware.JWTAuth(pubKey), middleware.RejectDisabled(userRepo), h.Me)
+	g.PATCH("/me", middleware.JWTAuth(pubKey), middleware.RejectDisabled(userRepo), h.UpdateMe)
+}
+func registerBillingRoutes(g *gin.RouterGroup, db *gorm.DB,
+	userRepo repository.UserRepository,
+	subRepo repository.SubscriptionRepository,
+	planRepo repository.PlanRepository,
+	projRepo repository.ProjectRepository,
+	ent *entitlements.Service) {
+	h := handlers.NewBillingHandler(db, userRepo, subRepo, planRepo, projRepo, ent)
+	g.POST("/billing/trial", h.StartTrial)
+	g.POST("/billing/subscribe", h.Subscribe)
+	g.POST("/billing/cancel", h.Cancel)
+	// GET /billing/me returns the resolved billing state for the
+	// authenticated user (subscription + plan + usage). Phase 6 wired
+	// the handler; phase 8 wires the route so the Topbar plan badge
+	// can display the real plan name instead of hard-coded "Pro".
+	g.GET("/billing/me", h.Me)
 }
 
+// registerAdminRoutes wires /api/admin/*. Stop impersonation stays
+// outside the staff-permission group. If the Super Admin hard gate
+// fails, RequireRole("admin") stays on and permission middleware is
+// not applied (no lockout from a partial seed).
+func registerAdminRoutes(g *gin.RouterGroup, database *gorm.DB,
+	userRepo repository.UserRepository,
+	subRepo repository.SubscriptionRepository,
+	planRepo repository.PlanRepository,
+	auditRepo repository.AdminAuditLogRepository,
+	projRepo repository.ProjectRepository,
+	activityRepo repository.UserActivityRepository,
+	privKey *rsa.PrivateKey) {
+	h := handlers.NewAdminHandler(database, userRepo, subRepo, planRepo, auditRepo, projRepo, activityRepo, privKey)
+	g.POST("/admin/users/:id/stop-impersonation", middleware.AllowStopImpersonation(), h.StopImpersonation)
+
+	gateErr := db.SuperAdminCatalogReady(database)
+	usePerms := gateErr == nil
+	if gateErr != nil {
+		log.Printf("[admin] HARD GATE FAILED — keeping RequireRole: %v", gateErr)
+	} else {
+		log.Printf("[admin] hard gate ok — permission guard enabled")
+	}
+
+	admin := g.Group("/admin")
+	if usePerms {
+		admin.Use(middleware.LoadStaffPermissions(database))
+	} else {
+		admin.Use(middleware.RequireRole(models.RoleAdmin))
+	}
+
+	p := func(code string, fn gin.HandlerFunc) []gin.HandlerFunc {
+		if usePerms {
+			return []gin.HandlerFunc{middleware.RequirePermission(code), fn}
+		}
+		return []gin.HandlerFunc{fn}
+	}
+	any := func(fn gin.HandlerFunc, codes ...string) []gin.HandlerFunc {
+		if usePerms {
+			return append([]gin.HandlerFunc{middleware.RequireAnyPermission(codes...)}, fn)
+		}
+		return []gin.HandlerFunc{fn}
+	}
+
+	admin.GET("/me", p(models.PermAdminAccess, h.AdminMe)...)
+	admin.GET("/roles", p(models.PermUsersRead, h.ListRoles)...)
+	admin.GET("/users", p(models.PermUsersRead, h.ListUsers)...)
+	admin.GET("/users/export", p(models.PermUsersExport, h.ExportUsers)...)
+	admin.GET("/users/:id", p(models.PermUsersRead, h.GetUser)...)
+	admin.GET("/users/:id/activity", p(models.PermUsersActivityRead, h.GetUserActivity)...)
+	admin.PATCH("/users/:id", p(models.PermUsersUpdate, h.UpdateUser)...)
+	admin.POST("/users/:id/reset-password", p(models.PermUsersPasswordReset, h.ResetPassword)...)
+	admin.POST("/users/:id/suspend", p(models.PermUsersSuspend, h.SuspendUser)...)
+	admin.POST("/users/:id/unsuspend", p(models.PermUsersSuspend, h.UnsuspendUser)...)
+	admin.POST("/users/:id/impersonate", p(models.PermUsersImpersonate, h.ImpersonateUser)...)
+	admin.GET("/plans", p(models.PermPlansRead, h.ListPlans)...)
+	admin.POST("/plans", p(models.PermPlansWrite, h.CreatePlan)...)
+	admin.PATCH("/plans/:id", p(models.PermPlansWrite, h.UpdatePlan)...)
+	admin.GET("/audit-log", p(models.PermAuditRead, h.ListAuditLog)...)
+	admin.GET("/stats", any(h.Stats, models.PermStatsOverviewRead, models.PermStatsRevenueRead)...)
+	admin.GET("/projects", p(models.PermProjectsRead, h.ListProjects)...)
+	admin.GET("/projects/stats", p(models.PermProjectsRead, h.GetProjectStats)...)
+	admin.GET("/projects/:id", p(models.PermProjectsRead, h.GetProject)...)
+	admin.GET("/projects/:id/metrics", p(models.PermProjectsRead, h.GetProjectMetrics)...)
+	admin.GET("/projects/:id/seo", p(models.PermProjectsRead, h.GetProjectSEO)...)
+	admin.GET("/projects/:id/social", p(models.PermProjectsRead, h.GetProjectSocial)...)
+	admin.GET("/platform/seo-health", p(models.PermPlatformSEORead, h.PlatformSEOHealth)...)
+	admin.GET("/platform/social-health", p(models.PermPlatformSocialRead, h.PlatformSocialHealth)...)
+	admin.GET("/platform/health", p(models.PermPlatformHealthRead, h.PlatformHealth)...)
+	admin.GET("/integrations/status", p(models.PermIntegrationsRead, h.IntegrationsStatus)...)
+}
 func registerProjectRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, database *gorm.DB, encKey []byte,
 	metricRepo repository.MetricRepository, oauthRepo repository.OAuthRepository, seoRepo repository.SEORepository,
-	dataForSEOSvc services.DataForSEOService, rapidAPISvc services.RapidAPIService, crawler services.SEOCrawlerService) {
-	h := handlers.NewProjectHandler(projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOSvc, rapidAPISvc, crawler)
+	dataForSEOSvc services.DataForSEOService, rapidAPISvc services.RapidAPIService, crawler services.SEOCrawlerService,
+	ent *entitlements.Service) {
+	h := handlers.NewProjectHandler(projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOSvc, rapidAPISvc, crawler, ent)
 
 	g.GET("/projects", h.List)
 	g.POST("/projects", h.Create)
@@ -360,17 +474,16 @@ func registerSyncRoutes(
 	metricRepo repository.MetricRepository,
 	oauthRepo repository.OAuthRepository,
 	seoRepo repository.SEORepository,
-	insightRepo repository.InsightRepository,
-	dataForSEOSvc services.DataForSEOService,
-	rapidAPISvc services.RapidAPIService,
+	gscService services.GSCService,
+	metaService services.MetaService,
+	linkedinService services.LinkedinService,
+	keywordService services.KeywordService,
 	crawler services.SEOCrawlerService,
-	gscSvc services.GSCService,
-	metaSvc services.MetaService,
 	encKey []byte,
+	metaPageToken string,
+	linkedinToken string,
 ) {
-	h := handlers.NewSyncHandler(projectRepo, metricRepo, oauthRepo, seoRepo, insightRepo, dataForSEOSvc, rapidAPISvc, crawler, encKey).
-		WithGSCService(gscSvc).
-		WithMetaService(metaSvc)
+	h := handlers.NewSyncHandler(projectRepo, metricRepo, oauthRepo, seoRepo, gscService, metaService, linkedinService, keywordService, crawler, encKey, metaPageToken, linkedinToken)
 	g.POST("/projects/:id/sync", h.SyncProject)
 }
 

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"crypto/rsa"
+	"encoding/json"
+	"log"
 	"time"
 
 	"backend/internal/config"
@@ -11,38 +13,46 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type AuthHandler struct {
-	userRepo    repository.UserRepository
-	tokenRepo   repository.RefreshTokenRepository
-	projectRepo repository.ProjectRepository
-	privKey     *rsa.PrivateKey
-	pubKey      *rsa.PublicKey
-	encKey      []byte
-	cfg         *config.Config
+	db               *gorm.DB
+	userRepo         repository.UserRepository
+	tokenRepo        repository.RefreshTokenRepository
+	projectRepo      repository.ProjectRepository
+	subscriptionRepo repository.SubscriptionRepository
+	activityRepo     repository.UserActivityRepository
+	privKey          *rsa.PrivateKey
+	pubKey           *rsa.PublicKey
+	encKey           []byte
+	cfg              *config.Config
 }
-
 func NewAuthHandler(
+	db *gorm.DB,
 	userRepo repository.UserRepository,
 	tokenRepo repository.RefreshTokenRepository,
 	projectRepo repository.ProjectRepository,
+	subscriptionRepo repository.SubscriptionRepository,
+	activityRepo repository.UserActivityRepository,
 	privKey *rsa.PrivateKey,
 	pubKey *rsa.PublicKey,
 	encKey []byte,
 	cfg *config.Config,
 ) *AuthHandler {
 	return &AuthHandler{
-		userRepo:    userRepo,
-		tokenRepo:   tokenRepo,
-		projectRepo: projectRepo,
-		privKey:     privKey,
-		pubKey:      pubKey,
-		encKey:      encKey,
-		cfg:         cfg,
+		db:               db,
+		userRepo:         userRepo,
+		tokenRepo:        tokenRepo,
+		projectRepo:      projectRepo,
+		subscriptionRepo: subscriptionRepo,
+		activityRepo:     activityRepo,
+		privKey:          privKey,
+		pubKey:           pubKey,
+		encKey:           encKey,
+		cfg:              cfg,
 	}
 }
-
 type RegisterRequest struct {
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
@@ -83,6 +93,20 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		utils.InternalError(c, "Failed to create account")
 		return
 	}
+	// Auto-subscribe the new user to the default (free) plan. This row is
+	// the source of truth for entitlements — entitlements.ResolveSubscription
+	// falls back to the default if the row is missing, but we create it
+	// explicitly here so admin views and the user management surface are
+	// simpler.
+	sub := &models.Subscription{
+		UserID:   user.ID,
+		PlanCode: "free",
+		Status:   models.SubscriptionStatusActive,
+		StartsAt: time.Now(),
+	}
+	if err := h.subscriptionRepo.Create(sub); err != nil {
+		log.Printf("[auth] WARN: failed to auto-subscribe user %d: %v", user.ID, err)
+	}
 
 	// Issue tokens
 	h.issueTokens(c, user)
@@ -110,6 +134,27 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		utils.Unauthorized(c, "Invalid email or password")
 		return
 	}
+	if user.DisabledAt != nil {
+		utils.Unauthorized(c, "Invalid email or password")
+		return
+	}
+
+	// Log login event and update login tracking fields.
+	now := time.Now()
+	h.db.Model(&models.User{}).Where("id = ?", user.ID).Updates(map[string]any{
+		"last_login_at": now,
+		"login_count":   gorm.Expr("login_count + 1"),
+	})
+	if h.activityRepo != nil {
+		meta, _ := json.Marshal(map[string]any{"email": user.Email})
+		_ = h.activityRepo.Create(&models.UserActivity{
+			UserID:    user.ID,
+			Action:    models.UserActivityLogin,
+			Metadata:  meta,
+			IPAddress: c.ClientIP(),
+			UserAgent: c.Request.UserAgent(),
+		})
+	}
 
 	h.issueTokens(c, user)
 }
@@ -133,6 +178,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		utils.Unauthorized(c, "User not found")
 		return
 	}
+	if user.DisabledAt != nil {
+		_ = h.tokenRepo.Delete(token.ID)
+		utils.Unauthorized(c, "Session expired")
+		return
+	}
 
 	// Rotate token
 	h.tokenRepo.Delete(token.ID)
@@ -154,6 +204,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	utils.NoContent(c)
 }
 
+
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -168,6 +219,55 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	}
 
 	utils.Success(c, user, nil)
+}
+
+// UpdateMeBody is the body shape for PATCH /api/auth/me.
+type UpdateMeBody struct {
+	DashboardMode string `json:"dashboard_mode" binding:"required"`
+}
+
+// validDashboardMode reports whether v is one of the allowed mode
+// literals: "search" | "social" | "combined".
+func validDashboardMode(v string) bool {
+	switch v {
+	case models.DashboardModeSearch, models.DashboardModeSocial, models.DashboardModeCombined:
+		return true
+	}
+	return false
+}
+
+// UpdateMe writes mutable fields on the calling user. Phase 4 only
+// exposes dashboard_mode; future fields will share this handler.
+func (h *AuthHandler) UpdateMe(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		utils.Unauthorized(c, "Not authenticated")
+		return
+	}
+	var req UpdateMeBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(c, err)
+		return
+	}
+	if !validDashboardMode(req.DashboardMode) {
+		utils.BadRequest(c, "dashboard_mode must be one of: search, social, combined", "VALIDATION_ERROR")
+		return
+	}
+
+	user, err := h.userRepo.FindByID(userID.(uint))
+	if err != nil || user == nil {
+		utils.NotFound(c, "User not found")
+		return
+	}
+	user.DashboardMode = req.DashboardMode
+	if err := h.userRepo.Update(user); err != nil {
+		utils.InternalError(c, "Failed to update user")
+		return
+	}
+	utils.Success(c, gin.H{
+		"user_id":        user.ID,
+		"dashboard_mode": user.DashboardMode,
+	}, nil)
 }
 
 func (h *AuthHandler) issueTokens(c *gin.Context, user *models.User) {

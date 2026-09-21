@@ -100,36 +100,8 @@ export default function GrowthTrackingPage() {
     </div>
   );
 
-  // Generate simulated history if we don't have enough data points for the charts
-  let finalSocialHistory = [...socialHistory];
-  if (finalSocialHistory.length <= 1 && socialMetrics.length > 0) {
-    const generatedHistory: any[] = [];
-    socialMetrics.forEach(sm => {
-      const baseFollowers = sm.followers ?? 0;
-      const baseReach = sm.reach ?? 0;
-      const baseEng = sm.engagement_count ?? sm.engagementCount ?? 0;
-      
-      for (let i = 29; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        
-        // Calculate a rapid, consistent growth curve backwards
-        const dayIndex = 29 - i;
-        // e.g. grew by 65% over the month, consistently
-        const growth = 1.0 - ((29 - dayIndex) / 29.0) * 0.65; 
-        const noise = 0.98 + Math.random() * 0.04; // ±2% noise for consistency
-        
-        generatedHistory.push({
-          platform: sm.platform,
-          recorded_at: d.toISOString(),
-          followers: Math.round(baseFollowers * growth * noise),
-          reach: Math.round(baseReach * growth * noise),
-          engagement_count: Math.round(baseEng * growth * noise),
-        });
-      }
-    });
-    finalSocialHistory = generatedHistory;
-  }
+  const finalSocialHistory = [...socialHistory];
+  const liveMetrics = metrics.filter((m: any) => m.source === "gsc");
 
   // Get per-platform deltas
   const platforms = [...new Set(finalSocialHistory.map((h: any) => h.platform).filter(Boolean))];
@@ -151,7 +123,7 @@ export default function GrowthTrackingPage() {
   const growthRate = activeSocial?.engagement?.toFixed(1) ?? "0.0";
 
   // Follower growth chart data from history
-  const followerChartData = finalSocialHistory
+  const followerChartRaw = finalSocialHistory
     .filter((h: any) => h.platform?.toLowerCase() === (activePlatform || platforms[0] || "").toLowerCase())
     .sort((a: any, b: any) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime())
     .slice(-30)
@@ -160,16 +132,17 @@ export default function GrowthTrackingPage() {
       followers: h.followers ?? 0,
       reach: h.reach ?? 0,
     }));
+  const followerChartData = followerChartRaw.length <= 1 ? [] : followerChartRaw;
 
   // Traffic or Reach chart from metrics or social history
   let trafficChartData: any[] = [];
-  if (metrics.length > 0) {
-    trafficChartData = metrics.map((m: any) => ({
+  if (liveMetrics.length > 0) {
+    trafficChartData = liveMetrics.map((m: any) => ({
       date: m.date ? new Date(m.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : m.name,
       traffic: m.clicks || m.traffic || 0,
       engagement: m.engagement || 0,
     }));
-  } else if (finalSocialHistory.length > 0) {
+  } else if (finalSocialHistory.length > 1) {
     trafficChartData = finalSocialHistory
       .filter((h: any) => h.platform?.toLowerCase() === currentPlatformStr)
       .sort((a: any, b: any) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime())
@@ -179,6 +152,7 @@ export default function GrowthTrackingPage() {
         traffic: h.reach ?? 0,
         engagement: h.engagement_count ?? h.engagementCount ?? 0,
       }));
+    if (trafficChartData.length <= 1) trafficChartData = [];
   }
 
   return (
@@ -286,7 +260,7 @@ export default function GrowthTrackingPage() {
           {followerChartData.length === 0 ? (
             <div className="flex items-center justify-center h-60 text-slate-300 text-sm flex-col gap-3">
               <Users className="w-8 h-8" />
-              <span>Sync profiles to see follower growth over time.</span>
+              <span>Not enough snapshots yet.</span>
               <Button size="sm" className="rounded-xl" onClick={handleSync} disabled={syncing}>
                 {syncing ? "Syncing..." : "Sync Now"}
               </Button>
@@ -320,7 +294,7 @@ export default function GrowthTrackingPage() {
       <Card className="border-slate-100 shadow-none rounded-3xl overflow-hidden">
         <CardHeader className="p-8 pb-0">
           <CardTitle className="text-base font-semibold text-slate-900">
-            {metrics.length > 0 ? "Traffic & Engagement Trend" : "Reach & Engagement Trend"}
+            {liveMetrics.length > 0 ? "Traffic & Engagement Trend" : "Reach & Engagement Trend"}
           </CardTitle>
           <CardDescription className="text-slate-400">Real data from your connected project</CardDescription>
         </CardHeader>
@@ -350,7 +324,7 @@ export default function GrowthTrackingPage() {
                     contentStyle={{ borderRadius: "12px", border: "1px solid #f1f5f9", backgroundColor: "#fff", boxShadow: "0 10px 15px rgba(0,0,0,0.08)" }}
                     itemStyle={{ fontSize: "12px", fontWeight: 600 }}
                   />
-                  <Area type="monotone" dataKey="traffic" stroke="#0f172a" strokeWidth={2.5} fillOpacity={1} fill="url(#trafficGrad2)" name={metrics.length > 0 ? "Traffic" : "Reach"} />
+                  <Area type="monotone" dataKey="traffic" stroke="#0f172a" strokeWidth={2.5} fillOpacity={1} fill="url(#trafficGrad2)" name={liveMetrics.length > 0 ? "Traffic" : "Reach"} />
                   <Area type="monotone" dataKey="engagement" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#engagementGrad2)" name="Engagement" />
                 </AreaChart>
               </ResponsiveContainer>

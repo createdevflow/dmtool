@@ -80,6 +80,15 @@ func NotFound(c *gin.Context, message string) {
 	ErrorResponse(c, http.StatusNotFound, "NOT_FOUND", message, "")
 }
 
+// Conflict writes a 409 response.
+func Conflict(c *gin.Context, message, code string) {
+	ErrorResponse(c, http.StatusConflict, code, message, "")
+}
+
+// NotImplemented writes a 501 response.
+func NotImplemented(c *gin.Context, message string) {
+	ErrorResponse(c, http.StatusNotImplemented, "NOT_IMPLEMENTED", message, "")
+}
 // RateLimited writes a 429 response.
 func RateLimited(c *gin.Context) {
 	ErrorResponse(c, http.StatusTooManyRequests, "RATE_LIMITED", "Too many requests. Please try again later.", "")

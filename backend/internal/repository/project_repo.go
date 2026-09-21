@@ -17,6 +17,7 @@ type ProjectRepository interface {
 	Update(project *models.Project) error
 	Delete(id, userID uint) error
 	FindAll() ([]models.Project, error)
+	CountSEOByUser(userID uint) (int64, error)
 }
 
 type gormProjectRepository struct {
@@ -49,8 +50,6 @@ func (r *gormProjectRepository) FindByIDAndUser(id, userID uint) (*models.Projec
 	}
 	return &project, nil
 }
-
-
 // Update saves changes to an existing project.
 func (r *gormProjectRepository) Update(project *models.Project) error {
 	return r.db.Save(project).Error
@@ -60,9 +59,22 @@ func (r *gormProjectRepository) Update(project *models.Project) error {
 func (r *gormProjectRepository) Delete(id, userID uint) error {
 	return r.db.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Project{}).Error
 }
+
+// FindAll retrieves all projects in the system.
 // FindAll retrieves all projects in the system.
 func (r *gormProjectRepository) FindAll() ([]models.Project, error) {
 	var projects []models.Project
 	err := r.db.Find(&projects).Error
 	return projects, err
 }
+
+// "seo" or "both". Used by the entitlements service to enforce per-plan
+// site limits. Soft-deleted rows are excluded by GORM automatically.
+func (r *gormProjectRepository) CountSEOByUser(userID uint) (int64, error) {
+	var n int64
+	err := r.db.Model(&models.Project{}).
+		Where("user_id = ? AND goal IN ?", userID, []string{models.GoalSEO, models.GoalBoth}).
+		Count(&n).Error
+	return n, err
+}
+

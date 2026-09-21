@@ -57,10 +57,13 @@ func JWTAuth(publicKey *rsa.PublicKey) gin.HandlerFunc {
 		}
 
 
-		// Store claims in context — handlers read from here, never from request body
-		c.Set("user_id", claims.UserID)
-		c.Set("user_email", claims.Email)
-		c.Set("user_role", claims.Role)
-		c.Next()
+	c.Set("user_id", claims.UserID)
+	c.Set("user_email", claims.Email)
+	c.Set("user_role", claims.Role)
+	// Expose impersonation claim so downstream middleware (RequireRole)
+	// can reject admin-bound requests carrying an impersonation token.
+	c.Set("is_impersonation", claims.IsImpersonation)
+	c.Set("impersonator_id", claims.ImpersonatorID)
+	c.Next()
 	}
 }

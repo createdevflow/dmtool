@@ -11,6 +11,7 @@ import (
 // SEORepository manages SEO issues and keyword results.
 type SEORepository interface {
 	CreateIssue(issue *models.SEOIssue) error
+	ReplaceOpenIssues(projectID uint, issues []models.SEOIssue) error
 	FindOpenIssues(projectID uint, severity string) ([]models.SEOIssue, error)
 	ResolveIssue(id, projectID uint) error
 
@@ -29,6 +30,19 @@ func NewSEORepository(db *gorm.DB) SEORepository {
 
 func (r *gormSEORepository) CreateIssue(issue *models.SEOIssue) error {
 	return r.db.Create(issue).Error
+}
+
+// ReplaceOpenIssues deletes open issues for the project and inserts this run's
+// findings so a re-audit does not inflate the open count.
+func (r *gormSEORepository) ReplaceOpenIssues(projectID uint, issues []models.SEOIssue) error {
+	if err := r.db.Where("project_id = ? AND resolved_at IS NULL", projectID).
+		Delete(&models.SEOIssue{}).Error; err != nil {
+		return err
+	}
+	if len(issues) == 0 {
+		return nil
+	}
+	return r.db.Create(&issues).Error
 }
 
 // FindOpenIssues returns all unresolved SEO issues, optionally filtered by severity.
@@ -55,11 +69,16 @@ func (r *gormSEORepository) UpsertKeywords(results []models.KeywordResult) error
 	return r.db.Save(&results).Error
 }
 
-// FindKeywords returns cached keyword results for a project+seed pair.
+// FindKeywords returns cached keyword results for a project.
+// An empty seed returns every keyword for the project (used by Rank Tracking).
 // The bool return indicates whether the cache is still valid (< 24 hours old).
 func (r *gormSEORepository) FindKeywords(projectID uint, seed string) ([]models.KeywordResult, bool, error) {
 	var results []models.KeywordResult
-	err := r.db.Where("project_id = ? AND seed = ?", projectID, seed).Find(&results).Error
+	q := r.db.Where("project_id = ?", projectID)
+	if seed != "" {
+		q = q.Where("seed = ?", seed)
+	}
+	err := q.Find(&results).Error
 	if err != nil || len(results) == 0 {
 		return nil, false, err
 	}

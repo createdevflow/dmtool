@@ -19,34 +19,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Legend, Tooltip as RechartsTooltip } from 'recharts';
 
-const mockAudience = [
-  { name: 'Followers', value: 75, color: '#0ea5e9' },
-  { name: 'Non-followers', value: 25, color: '#e2e8f0' }
-];
 
-const mockContentSplit = [
-  { type: 'Reels', percentage: 98.5, color: 'bg-rose-500' },
-  { type: 'Stories', percentage: 1.5, color: 'bg-amber-500' },
-  { type: 'Posts', percentage: 0, color: 'bg-sky-500' }
-];
-
-const mockTopContent = [
-  { id: 1, type: 'Reel', views: '12.4K', interactions: 845, date: 'Oct 12', img: 'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?w=150&h=150&fit=crop' },
-  { id: 2, type: 'Reel', views: '8.2K', interactions: 520, date: 'Oct 10', img: 'https://images.unsplash.com/photo-1515378791036-0648a3ef77b2?w=150&h=150&fit=crop' },
-  { id: 3, type: 'Reel', views: '5.1K', interactions: 310, date: 'Oct 05', img: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=150&h=150&fit=crop' },
-  { id: 4, type: 'Story', views: '3.4K', interactions: 120, date: 'Oct 04', img: 'https://images.unsplash.com/photo-1542204165-65bf26472b9b?w=150&h=150&fit=crop' },
-  { id: 5, type: 'Reel', views: '2.8K', interactions: 95, date: 'Oct 01', img: 'https://images.unsplash.com/photo-1518770660439-4636190af475?w=150&h=150&fit=crop' },
-];
-
-const mockActiveTimes = [
-  { day: 'Mon', active: 65 },
-  { day: 'Tue', active: 70 },
-  { day: 'Wed', active: 85 },
-  { day: 'Thu', active: 90 },
-  { day: 'Fri', active: 100 },
-  { day: 'Sat', active: 80 },
-  { day: 'Sun', active: 60 },
-];
 
 const platformIcons: Record<string, any> = {
   Instagram, Twitter, LinkedIn: Linkedin, linkedin: Linkedin, Facebook,
@@ -538,7 +511,7 @@ export default function ProfileAnalyzerPage() {
                 const reachDelta = getDelta("reach");
                 
                 // --- Parse Dynamic Data ---
-                let dynamicTopContent = mockTopContent;
+                let dynamicTopContent: any[] = [];
                 if (activeSocial?.top_content) {
                   try {
                     const parsed = JSON.parse(activeSocial.top_content);
@@ -557,7 +530,7 @@ export default function ProfileAnalyzerPage() {
                   }
                 } catch (e) {}
 
-                let dynamicContentSplit = mockContentSplit;
+                let dynamicContentSplit: any[] = [];
                 if (activeSocial?.content_split) {
                   try {
                     const parsed = JSON.parse(activeSocial.content_split);
@@ -566,7 +539,7 @@ export default function ProfileAnalyzerPage() {
                 }
 
                 // active_times may be stored as JSON array [{day, active}] or as an object mapping
-                let dynamicActiveTimes = mockActiveTimes;
+                let dynamicActiveTimes: any[] = [];
                 if (activeSocial?.active_times) {
                   try {
                     const parsed = JSON.parse(activeSocial.active_times);
@@ -580,14 +553,12 @@ export default function ProfileAnalyzerPage() {
                       }
                       if (arr.length > 0) dynamicActiveTimes = arr;
                     }
-                  } catch (e) {
-                    // keep mock
-                  }
+                  } catch (e) {}
                 }
 
                 // Audience insights parsing
                 // We will build: pie data for audience split, ageGender for grouped bar, and country/city lists
-                let dynamicAudience: any[] = mockAudience;
+                let dynamicAudience: any[] = [];
                 let ageGenderData: any[] = [];
                 let topCountries: [string, number][] = [];
                 let topCities: [string, number][] = [];
@@ -660,9 +631,9 @@ export default function ProfileAnalyzerPage() {
                       ))}
                     </div>
 
-                    {/* Split Insights Row */}
+                    {(dynamicAudience.length > 0 || dynamicContentSplit.length > 0) && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Audience Split */}
+                      {dynamicAudience.length > 0 && (
                       <Card className="border-slate-100 shadow-none rounded-2xl p-6">
                         <p className="text-sm font-bold text-slate-900 mb-6">Audience Distribution</p>
                         <div className="flex items-center justify-between">
@@ -689,8 +660,9 @@ export default function ProfileAnalyzerPage() {
                           </div>
                         </div>
                       </Card>
+                      )}
 
-                      {/* Content Split */}
+                      {dynamicContentSplit.length > 0 && (
                       <Card className="border-slate-100 shadow-none rounded-2xl p-6">
                         <p className="text-sm font-bold text-slate-900 mb-6">Content Performance by Type</p>
                         <div className="space-y-5">
@@ -711,9 +683,11 @@ export default function ProfileAnalyzerPage() {
                           ))}
                         </div>
                       </Card>
+                      )}
                     </div>
+                    )}
 
-                    {/* Top Content */}
+                    {dynamicTopContent.length > 0 && (
                     <Card className="border-slate-100 shadow-none rounded-2xl p-6 overflow-hidden">
                       <p className="text-sm font-bold text-slate-900 mb-6">Top Performing Content</p>
                       <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
@@ -739,9 +713,10 @@ export default function ProfileAnalyzerPage() {
                         ))}
                       </div>
                     </Card>
+                    )}
 
-                    {/* Follower Analytics & Profile Activity */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {dynamicActiveTimes.length > 0 && (
                       <Card className="border-slate-100 shadow-none rounded-2xl p-6">
                         <p className="text-sm font-bold text-slate-900 mb-6">Most Active Times</p>
                         <div className="h-[150px] w-full">
@@ -754,6 +729,7 @@ export default function ProfileAnalyzerPage() {
                           </ResponsiveContainer>
                         </div>
                       </Card>
+                      )}
                       <Card className="border-slate-100 shadow-none rounded-2xl p-6 flex flex-col justify-center space-y-6">
                         <p className="text-sm font-bold text-slate-900 mb-2">Profile Activity</p>
                         <div className="flex items-center justify-between border-b border-slate-50 pb-4">

@@ -54,7 +54,7 @@ func Init(databaseURL string, isDev bool) *gorm.DB {
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 
-	// AutoMigrate all v2 models (dev only; prod uses SQL migration files)
+	// AutoMigrate all v2 models (dev only; prod uses RunMigrations below).
 	if isDev {
 		if err := db.AutoMigrate(
 			&models.User{},
@@ -67,10 +67,24 @@ func Init(databaseURL string, isDev bool) *gorm.DB {
 			&models.Task{},
 			&models.SEOIssue{},
 			&models.KeywordResult{},
+			&models.Plan{},
+			&models.Subscription{},
+			&models.UserPreference{},
+			&models.AdminAuditLog{},
+			&models.Permission{},
+			&models.Role{},
+			&models.RolePermission{},
 		); err != nil {
 			log.Fatalf("[db] AutoMigrate failed: %v", err)
 		}
 		log.Println("[db] AutoMigrate completed successfully")
+	}
+
+	// Production schema migration. Runs in every environment, not gated
+	// by APP_ENV. Idempotent: re-runs are no-ops on tables AutoMigrate
+	// (dev) or a prior RunMigrations (prod) already created.
+	if err := RunMigrations(db); err != nil {
+		log.Fatalf("[db] RunMigrations failed: %v", err)
 	}
 
 	log.Println("[db] Database connection established")

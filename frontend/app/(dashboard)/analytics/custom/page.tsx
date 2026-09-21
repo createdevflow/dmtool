@@ -58,7 +58,8 @@ export default function CustomAnalyticsPage() {
 
         const res = await dashboardApi.getMetrics(selected.id, days);
         const raw = res.data?.data;
-        setMetrics(Array.isArray(raw) ? raw : []);
+        const rows = Array.isArray(raw) ? raw : [];
+        setMetrics(rows.filter((m: any) => m.source === "gsc"));
       }
     } catch (err) {
       console.error(err);

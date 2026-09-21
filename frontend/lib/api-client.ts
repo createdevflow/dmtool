@@ -1,4 +1,5 @@
 import axios from "axios";
+import { readCookie, COOKIE_TOKEN, COOKIE_IMPERSONATION_TOKEN, clearAuthCookie } from "./auth-cookie";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
 
@@ -8,55 +9,28 @@ const apiClient = axios.create({
     "Content-Type": "application/json",
   },
 });
-// ── SWR cache ────────────────────────────────────────────────────────────────
-// In-memory stale-while-revalidate cache for read-only dashboard endpoints.
-// TTL behavior:
-//   • <  CACHE_TTL_MS              → return cached value immediately
-//   • >= CACHE_TTL_MS, < 2x       → return cached value, refresh in background
-//   • >= 2x CACHE_TTL_MS          → wait on the network
-const CACHE_TTL_MS = 30_000;
-const swrCache = new Map<string, { ts: number; data: unknown }>();
 
-function cacheKey(url: string): string {
-  return url;
-}
-
-function swrFetch<T = any>(
-  url: string,
-  p: Promise<{ data: T }>
-): Promise<{ data: T }> {
-  const key = cacheKey(url);
-  const now = Date.now();
-  const entry = swrCache.get(key);
-  if (entry) {
-    const age = now - entry.ts;
-    if (age < CACHE_TTL_MS) {
-      // Fresh — serve from cache.
-      return Promise.resolve({ data: entry.data }) as Promise<{ data: T }>;
-    }
-    if (age < 2 * CACHE_TTL_MS) {
-      // Stale — serve cached value and refresh in background.
-      p.then((res) => {
-        swrCache.set(key, { ts: Date.now(), data: res.data });
-      }).catch(() => {
-        // Swallow background refresh errors; keep serving stale data.
-      });
-      return Promise.resolve({ data: entry.data }) as Promise<{ data: T }>;
-    }
-  }
-  // Cold or too-stale — wait on the network.
-  return p.then((res) => {
-    swrCache.set(key, { ts: Date.now(), data: res.data });
-    return res;
-  }) as unknown as Promise<{ data: T }>;
-}
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Request interceptor — attach JWT token to every request
+// Request interceptor — attach JWT token to every request.
+//
+// Token priority (phase 7):
+//   1. dmtool_impersonation_token cookie (admin user-support flow).
+//      While present, all requests carry the impersonation token —
+//      including Stop. POST /admin/users/:id/stop-impersonation is
+//      registered outside RequireRole("admin") so that JWT is accepted.
+//   2. dmtool_token cookie (phase 3 source of truth).
+//
+// The proxy at frontend/proxy.ts is configured to accept either
+// cookie as a valid auth shape for gated routes — see that file's
+// auth gate for the matching logic.
 apiClient.interceptors.request.use(
   (config) => {
-    if (typeof window !== "undefined") {
-      const token = localStorage.getItem("dmtool_token");
+    if (typeof document !== "undefined") {
+      const impToken = readCookie(COOKIE_IMPERSONATION_TOKEN);
+      if (impToken) {
+        config.headers.Authorization = `Bearer ${impToken}`;
+        return config;
+      }
+      const token = readCookie(COOKIE_TOKEN);
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -65,14 +39,14 @@ apiClient.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 );
-
-// Response interceptor — handle 401 (token expired) globally
+// Response interceptor — handle 401 (token expired) globally.
+// Clears the auth cookie instead of poking localStorage.
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       if (typeof window !== "undefined") {
-        localStorage.removeItem("dmtool_token");
+        clearAuthCookie(COOKIE_TOKEN);
         const path = window.location.pathname;
         if (path !== "/login" && path !== "/register") {
           window.location.href = "/login";
@@ -90,48 +64,46 @@ export const authApi = {
   login: (data: { email: string; password: string }) =>
     axios.post(`${API_BASE}/auth/login`, data),
   me: () => apiClient.get("/auth/me"),
+  updateMe: (data: { dashboard_mode: string }) => apiClient.patch("/auth/me", data),
   logout: () => apiClient.post("/auth/logout"),
 };
 
-// ── Projects API ──────────────────────────────────────────────────────────────
+// ── Projects API ─────────────────────────────────────────────────────────────
 export const projectsApi = {
   list: () => apiClient.get("/projects"),
-  create: (data: any) => apiClient.post("/projects", data),
-  update: (id: number, data: any) => apiClient.patch(`/projects/${id}`, data),
+  create: (data: { name: string; url: string; goal: string; ig_handle?: string; twitter_handle?: string; linkedin_handle?: string; fb_handle?: string }) =>
+    apiClient.post("/projects", data),
+  update: (id: number, data: Record<string, unknown>) => apiClient.patch(`/projects/${id}`, data),
   delete: (id: number) => apiClient.delete(`/projects/${id}`),
-  onboard: (data: any) => apiClient.post("/onboard", data),
+  onboard: (data: Record<string, unknown>) => apiClient.post("/onboard", data),
 };
-export const dashboardApi = {
-  // Projects (used in dashboard)
-  getProjects: () => apiClient.get("/projects"),
-  onboard: (data: any) => apiClient.post("/onboard", data),
-  deleteProject: (id: number) => apiClient.delete(`/projects/${id}`),
-  updateProject: (id: number, data: any) => apiClient.patch(`/projects/${id}`, data),
 
-  // Dashboard data
+export const dashboardApi = {
+  getProjects: () => apiClient.get("/projects"),
+  onboard: (data: Record<string, unknown>) => apiClient.post("/onboard", data),
+  deleteProject: (id: number) => apiClient.delete(`/projects/${id}`),
+  updateProject: (id: number, data: Record<string, unknown>) =>
+    apiClient.patch(`/projects/${id}`, data),
+
   getSnapshot: (projectId: number) =>
-    swrFetch(`/dashboard/snapshot?project_id=${projectId}`, apiClient.get(`/dashboard/snapshot?project_id=${projectId}`)),
+    apiClient.get(`/dashboard/snapshot?project_id=${projectId}`),
   getMetrics: (projectId: number, days = 30) =>
-    swrFetch(`/dashboard/metrics?project_id=${projectId}&days=${days}`, apiClient.get(`/dashboard/metrics?project_id=${projectId}&days=${days}`)),
+    apiClient.get(`/dashboard/metrics?project_id=${projectId}&days=${days}`),
   getInsights: (projectId: number) =>
     apiClient.get(`/dashboard/insights?project_id=${projectId}`),
   getTasks: (projectId: number) =>
     apiClient.get(`/dashboard/tasks?project_id=${projectId}`),
-  createTask: (data: any) => apiClient.post(`/dashboard/tasks`, data),
-  toggleTask: (id: number, projectId?: number) => apiClient.patch(`/tasks/${id}/toggle${projectId ? `?project_id=${projectId}` : ''}`),
+  createTask: (data: Record<string, unknown>) => apiClient.post(`/dashboard/tasks`, data),
+  toggleTask: (id: number, projectId?: number) =>
+    apiClient.patch(`/tasks/${id}/toggle${projectId ? `?project_id=${projectId}` : ""}`),
   getTraffic: (projectId: number, days = 30) =>
     apiClient.get(`/dashboard/traffic?project_id=${projectId}&days=${days}`),
-  getAlerts: (projectId: number) =>
-    apiClient.get(`/alerts?project_id=${projectId}`),
-  getCompetitors: (projectId: number) =>
-    apiClient.get(`/competitors?project_id=${projectId}`),
+  getAlerts: (projectId: number) => apiClient.get(`/alerts?project_id=${projectId}`),
+  getCompetitors: (projectId: number) => apiClient.get(`/competitors?project_id=${projectId}`),
 
-  // SEO
   runSeoAudit: (projectId: number, url?: string) =>
-    apiClient.post(`/seo/audit/run`, { project_id: projectId, url: url || "" }),
+    apiClient.post(`/seo/audit/run`, { project_id: projectId, url: url ?? "" }),
   getSeoAudit: (projectId: number) =>
-    apiClient.get(`/seo/audit?project_id=${projectId}`),
-  getSeoAuditById: (projectId: number) =>
     apiClient.get(`/seo/audit?project_id=${projectId}`),
   getSeoIssues: (projectId: number, severity?: string) =>
     apiClient.get(
@@ -148,7 +120,6 @@ export const dashboardApi = {
   resolveIssue: (issueId: number, projectId: number) =>
     apiClient.put(`/seo/issues/${issueId}?project_id=${projectId}`),
 
-  // Social
   getSocialInsights: (projectId: number) =>
     apiClient.get(`/social/insights?project_id=${projectId}`),
   refreshSocial: (projectId: number) =>
@@ -162,7 +133,6 @@ export const dashboardApi = {
   getRelatedProfiles: (projectId: number) =>
     apiClient.get(`/social/related?project_id=${projectId}`),
 
-  // Content generation
   generateContent: (data: {
     project_id: number;
     topic: string;
@@ -170,7 +140,6 @@ export const dashboardApi = {
     tone?: string;
   }) => apiClient.post(`/content/generate`, data),
 
-  // Integrations
   getIntegrations: () => apiClient.get("/integrations"),
   getGoogleAuthUrl: () => apiClient.get("/integrations/google/auth-url"),
   getMetaAuthUrl: () => apiClient.get("/integrations/meta/auth-url"),
@@ -178,39 +147,34 @@ export const dashboardApi = {
   disconnectIntegration: (provider: string) =>
     apiClient.delete(`/integrations/${provider}`),
 
-  // Legacy aliases (keep for compatibility with existing pages)
-  generateKeywordsLegacy: (data: any) => apiClient.post("/seo/keywords", data),
+  generateKeywordsLegacy: (data: Record<string, unknown>) => apiClient.post("/seo/keywords", data),
 
   getProject: (id: number) => apiClient.get(`/projects/${id}`),
 
   getAutomations: (projectId: number) => apiClient.get(`/system/automations?project_id=${projectId}`),
-  createAutomation: (data: any) => apiClient.post(`/system/automations`, data),
+  createAutomation: (data: Record<string, unknown>) => apiClient.post(`/system/automations`, data),
   toggleAutomation: (id: number) => apiClient.patch(`/system/automations/${id}/toggle`),
-  
+
   getCalendar: (projectId: number) => apiClient.get(`/system/calendar?project_id=${projectId}`),
-  createCalendarEvent: (data: any) => {
+  createCalendarEvent: (data: FormData | Record<string, unknown>) => {
     const isFormData = typeof FormData !== "undefined" && data instanceof FormData;
     return apiClient.post(`/system/calendar/event`, data, isFormData ? { headers: { "Content-Type": "multipart/form-data" } } : undefined);
   },
-  updateCalendarEvent: (id: number, data: any) => {
+  updateCalendarEvent: (id: number, data: FormData | Record<string, unknown>) => {
     const isFormData = typeof FormData !== "undefined" && data instanceof FormData;
     return apiClient.patch(`/system/calendar/event/${id}`, data, isFormData ? { headers: { "Content-Type": "multipart/form-data" } } : undefined);
   },
   deleteCalendarEvent: (id: number) => apiClient.delete(`/system/calendar/event/${id}`),
 
-  // Sync
   syncProject: (projectId: number) => apiClient.post(`/projects/${projectId}/sync`),
 
-  // SEO Extended
   getRankTracking: (projectId: number) => apiClient.get(`/seo/rank-tracking?project_id=${projectId}`),
   getBacklinks: (projectId: number) => apiClient.get(`/seo/backlinks?project_id=${projectId}`),
 
-  // Social History (for delta calculations)
   getSocialHistoryForDelta: (projectId: number, days = 7) =>
     apiClient.get(`/social/history?project_id=${projectId}&days=${days}`),
 };
 
-// ── Social API (separate namespace for clarity) ───────────────────────────────
 export const socialApi = {
   getInsights: (projectId: number) =>
     apiClient.get(`/social/insights?project_id=${projectId}`),
@@ -224,10 +188,9 @@ export const socialApi = {
     ),
 };
 
-// ── SEO API (separate namespace) ──────────────────────────────────────────────
 export const seoApi = {
   runAudit: (projectId: number, url?: string) =>
-    apiClient.post(`/seo/audit/run`, { project_id: projectId, url: url || "" }),
+    apiClient.post(`/seo/audit/run`, { project_id: projectId, url: url ?? "" }),
   getStatus: (projectId: number) =>
     apiClient.get(`/seo/audit?project_id=${projectId}`),
   getIssues: (projectId: number, severity?: string) =>
@@ -246,10 +209,367 @@ export const seoApi = {
     apiClient.put(`/seo/issues/${issueId}?project_id=${projectId}`),
 };
 
-// ── Public API (no auth required) ────────────────────────────────────────────
 export const publicApi = {
   seoAudit: (url: string) =>
     axios.get(`${API_BASE.replace("/api", "")}/api/public/seo-audit?url=${encodeURIComponent(url)}`),
+};
+// ── Billing API ──────────────────────────────────────────────────────────────
+// Phase 6. The Subscribe and StartTrial endpoints are stub-Stripe (no
+// real charge) until billing/webhook is implemented; the trial endpoint
+// starts a 14-day trialing row on a pro plan.
+export type Project = {
+  id: number;
+  created_at: string;
+  updated_at: string;
+  user_id: number;
+  name: string;
+  url: string;
+  goal: string;
+  status: string;
+  health: string;
+  health_score: number;
+  ig_handle: string;
+  facebook_handle: string;
+  twitter_handle: string;
+  linkedin_handle: string;
+};
+
+export type Plan = {
+  id: number;
+  code: string;
+  name: string;
+  description: string;
+  tier_rank: number;
+  monthly_cents: number;
+  yearly_cents: number;
+  currency: string;
+  max_sites: number;
+  is_active: boolean;
+};
+
+export type Subscription = {
+  id: number;
+  user_id: number;
+  plan_code: string;
+  status: "active" | "trialing" | "past_due" | "canceled";
+  trial_ends_at: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  canceled_at: string | null;
+  stripe_sub_id: string;
+};
+
+export type BillingState = {
+  subscription: Subscription | null;
+  plan: Plan;
+  usage: { seo_projects: number; max_sites: number };
+};
+
+export const billingApi = {
+  me: () => apiClient.get<{ data: BillingState }>("/billing/me"),
+  startTrial: (planCode: "pro_monthly" | "pro_yearly") =>
+    apiClient.post<{ data: Subscription }>("/billing/trial", { plan_code: planCode }),
+  subscribe: (planCode: "pro_monthly" | "pro_yearly") =>
+    apiClient.post<{ data: Subscription }>("/billing/subscribe", { plan_code: planCode }),
+  cancel: () => apiClient.post<{ data: Subscription }>("/billing/cancel"),
+};
+
+export const plansApi = {
+  list: () => axios.get<{ data: Plan[] }>(`${API_BASE}/plans`),
+};
+
+// ── Admin API ──────────────────────────────────────────────────────────────
+// Phase 7. Gated by RequireRole('admin') on the backend — the routes
+// return 403 to non-admins and to admins using an impersonation token.
+export type AdminUserSummary = {
+  id: number;
+  email: string;
+  name: string;
+  role: string;
+  plan_code: string;
+  sub_status: string;
+  created_at: string;
+  trial_used_at?: string | null;
+  last_login_at?: string | null;
+  disabled_at?: string | null;
+};
+
+export type AdminPlan = {
+  id: number;
+  code: string;
+  name: string;
+  description: string;
+  tier_rank: number;
+  monthly_cents: number;
+  yearly_cents: number;
+  currency: string;
+  max_sites: number;
+  is_active: boolean;
+};
+
+export type AdminAuditEntry = {
+  id: number;
+  created_at: string;
+  actor_user_id: number;
+  target_user_id: number;
+  action: string;
+  metadata: Record<string, unknown> | null;
+};
+
+export type AdminRole = {
+  id: number;
+  code: string;
+  name: string;
+  description: string;
+  is_system: boolean;
+};
+
+export type AdminStats = {
+  total_users: number;
+  new_users_7d: number;
+  new_users_30d: number;
+  active_subs: number;
+  trialing_subs: number;
+  canceled_subs: number;
+  mrr_cents: number;
+  arr_proxy_cents: number;
+  revenue_available?: boolean;
+  plan_breakdown: Record<string, number>;
+  user_growth_30d: Array<{ date: string; count: number }>;
+  recent_activity: AdminAuditEntry[];
+  // Phase 3: project stats + feature adoption
+  total_projects: number;
+  projects_new_7d: number;
+  projects_new_30d: number;
+  avg_health_score: number;
+  health_breakdown: Record<string, number>;
+  goal_breakdown: Record<string, number>;
+  feature_adoption: Record<string, number>;
+};
+
+export type PlatformSEOHealth = {
+  total_seo_projects: number;
+  avg_health_score: number;
+  total_keywords: number;
+  keywords_in_top_10: number;
+  total_open_issues: number;
+  critical_issues: number;
+  issue_breakdown: Record<string, number>;
+  health_distribution: Record<string, number>;
+};
+
+export type PlatformSocialHealth = {
+  total_social_projects: number;
+  total_followers: number;
+  avg_engagement_rate: number;
+  total_reach: number;
+  platform_breakdown: Record<string, number>;
+  status_breakdown: Record<string, number>;
+  top_projects: Array<{
+    project_id: number;
+    name: string;
+    url: string;
+    owner_email: string;
+    platform: string;
+    followers: number;
+    engagement_rate: number;
+    reach: number;
+  }>;
+};
+
+export type AdminUserActivity = {
+  id: number;
+  created_at: string;
+  user_id: number;
+  action: string;
+  metadata: Record<string, unknown> | null;
+  ip_address: string;
+  user_agent: string;
+};
+
+export type AdminProjectSummary = {
+  id: number;
+  name: string;
+  url: string;
+  user_id: number;
+  owner_email: string;
+  goal: string;
+  status: string;
+  health: string;
+  health_score: number;
+  created_at: string;
+};
+
+export type AdminSocialMetric = {
+  id: number;
+  project_id: number;
+  platform: string;
+  followers: number;
+  following_count: number;
+  posts_count: number;
+  reach: number;
+  engagement_rate: number;
+  status: string;
+  is_simulated: boolean;
+  recorded_at: string;
+};
+
+export type AdminInsight = {
+  id: number;
+  created_at: string;
+  project_id: number;
+  type: string;
+  title: string;
+  body: string;
+  priority: number;
+};
+
+export type SEOIssue = {
+  id: number;
+  created_at: string;
+  project_id: number;
+  url: string;
+  severity: string;
+  category: string;
+  detail: string;
+  resolved_at: string | null;
+};
+
+export type KeywordResult = {
+  id: number;
+  created_at: string;
+  project_id: number;
+  seed: string;
+  keyword: string;
+  volume: number;
+  kd: number;
+  position: number;
+};
+
+export type Metric = {
+  id: number;
+  project_id: number;
+  date: string;
+  clicks: number;
+  impressions: number;
+  reach: number;
+  engagement: number;
+  source: string;
+};
+
+export const adminApi = {
+  me: () =>
+    apiClient.get<{ data: { role: string; permissions: string[] } }>("/admin/me"),
+  listRoles: () => apiClient.get<{ data: AdminRole[] }>("/admin/roles"),
+  listUsers: (params: { page?: number; size?: number; search?: string; plan?: string; role?: string; mode?: string; status?: string } = {}) =>
+    apiClient.get<{
+      data: { users: AdminUserSummary[]; total: number; page: number; size: number };
+    }>("/admin/users", { params }),
+  getUser: (id: number) =>
+    apiClient.get<{
+      data: {
+        user: AdminUserSummary;
+        subscription: Subscription | null;
+        audit_log: AdminAuditEntry[];
+      };
+    }>(`/admin/users/${id}`),
+  updateUser: (id: number, body: { name?: string; email?: string; role?: string }) =>
+    apiClient.patch<{ data: AdminUserSummary }>(`/admin/users/${id}`, body),
+  resetPassword: (id: number) =>
+    apiClient.post<{
+      data: { user_id: number; temporary_password: string; message: string };
+    }>(`/admin/users/${id}/reset-password`),
+  getUserActivity: (id: number, limit = 50) =>
+    apiClient.get<{
+      data: { user_id: number; activities: AdminUserActivity[] };
+    }>(`/admin/users/${id}/activity`, { params: { limit } }),
+  suspendUser: (id: number, reason?: string) =>
+    apiClient.post<{
+      data: { user_id: number; disabled_at: string; message: string };
+    }>(`/admin/users/${id}/suspend`, { reason: reason || "" }),
+  unsuspendUser: (id: number) =>
+    apiClient.post<{
+      data: { user_id: number; message: string };
+    }>(`/admin/users/${id}/unsuspend`),
+  exportUsers: () =>
+    apiClient.get("/admin/users/export", { responseType: "blob" }),
+  impersonate: (id: number) =>
+    apiClient.post<{
+      data: { token: string; target: { id: number; email: string; name: string }; expires_in_minutes: number };
+    }>(`/admin/users/${id}/impersonate`),
+  stopImpersonation: (id: number) =>
+    apiClient.post<{ data: { message: string } }>(`/admin/users/${id}/stop-impersonation`, { target_id: id }),
+  listPlans: () => apiClient.get<{ data: AdminPlan[] }>("/admin/plans"),
+  createPlan: (body: Partial<AdminPlan>) =>
+    apiClient.post<{ data: AdminPlan }>("/admin/plans", body),
+  updatePlan: (id: number, body: Partial<AdminPlan>) =>
+    apiClient.patch<{ data: AdminPlan }>(`/admin/plans/${id}`, body),
+  listAuditLog: (params: { page?: number; size?: number; actor_id?: number; target_id?: number; action?: string } = {}) =>
+    apiClient.get<{
+      data: { entries: AdminAuditEntry[]; total: number; page: number; size: number };
+    }>("/admin/audit-log", { params }),
+  stats: () => apiClient.get<{ data: AdminStats }>("/admin/stats"),
+  // ── Projects (admin) ──
+  listProjects: (params: { page?: number; size?: number; search?: string; goal?: string; health?: string; owner?: string } = {}) =>
+    apiClient.get<{
+      data: { projects: AdminProjectSummary[]; total: number; page: number; size: number };
+    }>("/admin/projects", { params }),
+  getProject: (id: number) =>
+    apiClient.get<{
+      data: {
+        project: Project;
+        owner: { id: number; name: string; email: string };
+        seo: { open_issues: number; critical_issues: number; keyword_count: number };
+        social: AdminSocialMetric | null;
+        insights: AdminInsight[];
+      };
+    }>(`/admin/projects/${id}`),
+  getProjectMetrics: (id: number, limit = 30) =>
+    apiClient.get<{
+      data: { project_id: number; metrics: Metric[] };
+    }>(`/admin/projects/${id}/metrics`, { params: { limit } }),
+  getProjectSEO: (id: number) =>
+    apiClient.get<{
+      data: { project_id: number; issues: SEOIssue[]; keywords: KeywordResult[] };
+    }>(`/admin/projects/${id}/seo`),
+  getProjectSocial: (id: number) =>
+    apiClient.get<{
+      data: { project_id: number; latest: AdminSocialMetric | null; history: AdminSocialMetric[] };
+    }>(`/admin/projects/${id}/social`),
+  getProjectStats: () =>
+    apiClient.get<{
+      data: {
+        total_projects: number;
+        health_breakdown: Record<string, number>;
+        goal_breakdown: Record<string, number>;
+        avg_health_score: number;
+        new_7d: number;
+        new_30d: number;
+      };
+    }>("/admin/projects/stats"),
+  // ── Platform health (Phase 3) ──
+  platformSEOHealth: () =>
+    apiClient.get<{ data: PlatformSEOHealth }>("/admin/platform/seo-health"),
+  platformSocialHealth: () =>
+    apiClient.get<{ data: PlatformSocialHealth }>("/admin/platform/social-health"),
+  // ── System health (Phase 4) ──
+  platformHealth: () =>
+    apiClient.get<{
+      data: {
+        status: string;
+        services: Record<string, { status: string; latency?: string; total?: number; expired?: number; sync_errors?: number; with_issues?: number }>;
+      };
+    }>("/admin/platform/health"),
+  integrationsStatus: () =>
+    apiClient.get<{
+      data: {
+        total_connections: number;
+        active_connections: number;
+        unique_users: number;
+        unique_projects: number;
+        providers: Array<{ provider: string; total: number; expired: number; sync_errors: number; last_synced_at: string | null }>;
+      };
+    }>("/admin/integrations/status"),
 };
 
 export default apiClient;

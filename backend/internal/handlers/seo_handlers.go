@@ -76,18 +76,9 @@ func (h *SEOHandler) AuditRun(c *gin.Context) {
 		return
 	}
 
-	// Save each failed/warning check as a SEOIssue
-	for _, check := range result.Checks {
-		if check.Status == services.CheckFail || check.Status == services.CheckWarning {
-			issue := &models.SEOIssue{
-				ProjectID: project.ID,
-				URL:       targetURL,
-				Severity:  check.Severity,
-				Category:  check.Category,
-				Detail:    check.Label + ": " + check.Detail,
-			}
-			h.seoRepo.CreateIssue(issue)
-		}
+	issues := issuesFromChecks(project.ID, targetURL, result.Checks)
+	if err := h.seoRepo.ReplaceOpenIssues(project.ID, issues); err != nil {
+		log.Printf("[seo] failed to replace issues for project %d: %v", project.ID, err)
 	}
 
 	// Update project health score
@@ -377,6 +368,22 @@ func countIssues(checks []services.AuditCheck) gin.H {
 	return gin.H{"high": high, "medium": med, "low": low}
 }
 
+func issuesFromChecks(projectID uint, targetURL string, checks []services.AuditCheck) []models.SEOIssue {
+	var issues []models.SEOIssue
+	for _, check := range checks {
+		if check.Status == services.CheckFail || check.Status == services.CheckWarning {
+			issues = append(issues, models.SEOIssue{
+				ProjectID: projectID,
+				URL:       targetURL,
+				Severity:  check.Severity,
+				Category:  check.Category,
+				Detail:    check.Label + ": " + check.Detail,
+			})
+		}
+	}
+	return issues
+}
+
 func extractDomainKeyword(rawURL string) string {
 	s := rawURL
 	for _, pfx := range []string{"https://", "http://", "www."} {
@@ -410,37 +417,40 @@ func (h *SEOHandler) RankTracking(c *gin.Context) {
 		return
 	}
 
-	// Fetch stored keywords with position data
-	keywords, _, _ := h.seoRepo.FindKeywords(pid, "")
-
-	// Check if GSC is connected for real-time data
 	isGSCConnected := false
 	googleCred, err := h.oauthRepo.FindByUserAndProvider(userID, "google")
 	if err == nil && googleCred != nil {
 		isGSCConnected = true
 	}
 
-	// Compute visibility score: average of keyword positions inversely weighted
-	var visibilityScore float64
-	if len(keywords) > 0 {
-		for _, kw := range keywords {
+	// Rank Tracking is GSC-only. Without a Google connection, leftover
+	// autocomplete/seed rows must not appear as rankings.
+	ranked := make([]models.KeywordResult, 0)
+	if isGSCConnected {
+		stored, _, _ := h.seoRepo.FindKeywords(pid, "")
+		for _, kw := range stored {
 			if kw.Position > 0 {
-				// Position 1 = 100 score, Position 100 = 0 score
-				score := 100.0 - kw.Position
-				if score < 0 {
-					score = 0
-				}
-				visibilityScore += score
+				ranked = append(ranked, kw)
 			}
 		}
-		visibilityScore = visibilityScore / float64(len(keywords))
 	}
 
-	// Bucket keywords by position
+	var visibilityScore float64
+	if len(ranked) > 0 {
+		for _, kw := range ranked {
+			score := 100.0 - kw.Position
+			if score < 0 {
+				score = 0
+			}
+			visibilityScore += score
+		}
+		visibilityScore = visibilityScore / float64(len(ranked))
+	}
+
 	top3, top10, top30, beyond := 0, 0, 0, 0
-	for _, kw := range keywords {
+	for _, kw := range ranked {
 		switch {
-		case kw.Position > 0 && kw.Position <= 3:
+		case kw.Position <= 3:
 			top3++
 		case kw.Position <= 10:
 			top10++
@@ -452,11 +462,11 @@ func (h *SEOHandler) RankTracking(c *gin.Context) {
 	}
 
 	utils.Success(c, gin.H{
-		"keywords":        keywords,
-		"total":           len(keywords),
-		"visibility":      visibilityScore,
-		"gsc_connected":   isGSCConnected,
-		"health_score":    project.HealthScore,
+		"keywords":      ranked,
+		"total":         len(ranked),
+		"visibility":    visibilityScore,
+		"gsc_connected": isGSCConnected,
+		"health_score":  project.HealthScore,
 		"buckets": gin.H{
 			"top3":   top3,
 			"top10":  top10,
@@ -467,8 +477,7 @@ func (h *SEOHandler) RankTracking(c *gin.Context) {
 	}, nil)
 }
 
-// Backlinks returns external link signals for the project.
-// When GSC is connected, uses link data; otherwise returns SEO-issue based signals.
+// Backlinks does not have a link index. Returns zeros rather than estimated counts.
 func (h *SEOHandler) Backlinks(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 	projectIDStr := c.Query("project_id")
@@ -486,68 +495,17 @@ func (h *SEOHandler) Backlinks(c *gin.Context) {
 		return
 	}
 
-	// Check GSC connection
-	isGSCConnected := false
-	googleCred, err := h.oauthRepo.FindByUserAndProvider(userID, "google")
-	if err == nil && googleCred != nil {
-		isGSCConnected = true
-	}
-
-	// Generate domain-based backlink signals from project data
-	// In production with GSC connected, this would query the Search Console Links API
-	domainAuthority := calculateDomainAuthority(project.HealthScore)
-
-	// Use deterministic hash to generate stable backlink estimates
-	h2 := utils.HashString(project.URL)
-	totalBacklinks := int64(50 + (h2 % 5000))
-	referringDomains := int64(10 + (h2 % 500))
-	doFollowLinks := int64(float64(totalBacklinks) * 0.65)
-	noFollowLinks := totalBacklinks - doFollowLinks
-
-	// Generate sample referring domains for display
-	sampleDomains := generateSampleDomains(project.URL, h2)
-
 	utils.Success(c, gin.H{
-		"total_backlinks":    totalBacklinks,
-		"referring_domains":  referringDomains,
-		"do_follow":          doFollowLinks,
-		"no_follow":          noFollowLinks,
-		"domain_authority":   domainAuthority,
-		"gsc_connected":      isGSCConnected,
-		"is_estimated":       !isGSCConnected,
-		"top_domains":        sampleDomains,
-		"last_updated":       project.UpdatedAt.Format(time.RFC3339),
-		"upgrade_message":    "Connect Google Search Console to see real backlink data from your verified property.",
+		"total_backlinks":   0,
+		"referring_domains": 0,
+		"do_follow":         0,
+		"no_follow":         0,
+		"domain_authority":  0,
+		"gsc_connected":     false,
+		"is_estimated":      false,
+		"available":         false,
+		"top_domains":       []gin.H{},
+		"last_updated":      project.UpdatedAt.Format(time.RFC3339),
+		"message":           "Backlink index is not connected.",
 	}, nil)
-}
-
-func calculateDomainAuthority(healthScore int) int {
-	// Estimate DA from health score (rough correlation)
-	if healthScore == 0 {
-		return 0
-	}
-	da := int(float64(healthScore) * 0.4)
-	if da > 80 {
-		da = 80
-	}
-	if da < 5 {
-		da = 5
-	}
-	return da
-}
-
-func generateSampleDomains(siteURL string, h2 uint64) []gin.H {
-	domainBases := []string{"blog.example.com", "news.domain.org", "review.site.io", "partner.co", "directory.net"}
-	var domains []gin.H
-	for i, base := range domainBases {
-		da := int(20 + ((h2 + uint64(i*7)) % 60))
-		links := int(1 + ((h2 + uint64(i*3)) % 20))
-		domains = append(domains, gin.H{
-			"domain":    base,
-			"authority": da,
-			"links":     links,
-			"do_follow": i%3 != 0,
-		})
-	}
-	return domains
 }

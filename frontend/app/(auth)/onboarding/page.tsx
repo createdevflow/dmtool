@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, Variants } from "framer-motion";
 import { Globe, Users, ArrowRight, Activity, Search, AlertTriangle, CheckCircle2, Instagram, Twitter, Linkedin, Facebook, Loader2 } from "lucide-react";
-import { dashboardApi } from "@/lib/api-client";
+import { dashboardApi, authApi } from "@/lib/api-client";
+import { setMode } from "@/lib/auth-cookie";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -63,6 +64,14 @@ export default function OnboardingPage() {
       });
 
       setProjectData(res.data.data.project);
+      const mode =
+        goal === "seo" ? "search" : goal === "social" ? "social" : "combined";
+      setMode(mode);
+      try {
+        await authApi.updateMe({ dashboard_mode: mode });
+      } catch (e) {
+        console.error(e);
+      }
       setTimeout(() => setStep(4), 6000);
     } catch (err: any) {
       console.error(err);
@@ -431,7 +440,12 @@ export default function OnboardingPage() {
                    </div>
 
                    <button 
-                    onClick={() => router.push("/dashboard")}
+                    onClick={() => {
+                      const mode =
+                        goal === "seo" ? "search" : goal === "social" ? "social" : "combined";
+                      setMode(mode);
+                      router.push("/dashboard");
+                    }}
                     className="w-full h-16 bg-white text-slate-900 hover:bg-slate-50 font-bold text-lg rounded-2xl shadow-xl transition-all hover:scale-[1.01] active:scale-[0.99] relative z-10"
                    >
                      Enter Dashboard

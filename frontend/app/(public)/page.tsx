@@ -47,24 +47,7 @@ export default function LandingPage() {
           </Link>
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.8, duration: 1 }}
-          className="grid grid-cols-2 md:grid-cols-4 gap-12 pt-20 w-full border-t border-slate-50"
-        >
-           {[
-             { label: "Performance", value: "99.9%" },
-             { label: "Latency", value: "<100ms" },
-             { label: "Success Rate", value: "98.4%" },
-             { label: "Autonomous", value: "24/7" }
-           ].map((stat, i) => (
-             <div key={i} className="space-y-1">
-                <p className="text-2xl font-black text-slate-900">{stat.value}</p>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{stat.label}</p>
-             </div>
-           ))}
-        </motion.div>
+
       </main>
     </div>
   );

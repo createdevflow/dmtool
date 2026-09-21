@@ -1565,16 +1565,6 @@ func (h *AdminHandler) AdminMe(c *gin.Context) {
 	}, nil)
 }
 
-// ListRoles returns staff roles (not customer owner/viewer).
-func (h *AdminHandler) ListRoles(c *gin.Context) {
-	var roles []models.Role
-	if err := h.db.Order("is_system DESC, code ASC").Find(&roles).Error; err != nil {
-		utils.InternalError(c, "Failed to list roles")
-		return
-	}
-	utils.Success(c, roles, nil)
-}
-
 func (h *AdminHandler) isSystemRole(code string) bool {
 	if code == "" || code == models.RoleOwner || code == models.RoleViewer {
 		return false

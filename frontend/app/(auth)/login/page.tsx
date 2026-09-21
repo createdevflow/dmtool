@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Activity, ArrowRight, AlertCircle, Zap, Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { authApi } from "@/lib/api-client";
+import { authApi, startSessionKeepAlive } from "@/lib/api-client";
 import { setToken, setUser } from "@/lib/auth-cookie";
 
 export default function LoginPage() {
@@ -37,6 +37,7 @@ export default function LoginPage() {
       // truth for an auth credential is a foot-gun for stale-token bugs.
       setToken(token);
       setUser(user);
+      startSessionKeepAlive();
       router.push("/dashboard");
     } catch (err: any) {
       const errorData = err.response?.data?.error;

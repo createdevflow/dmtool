@@ -14,8 +14,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LogOut, User, Settings as SettingsIcon } from "lucide-react";
-import { dashboardApi, authApi, billingApi } from "@/lib/api-client";
-import { readCookie, COOKIE_USER, clearAuth } from "@/lib/auth-cookie";
+import { dashboardApi, authApi, billingApi, stopSessionKeepAlive } from "@/lib/api-client";
+import { readCookie, COOKIE_USER, clearAuth, clearImpersonation } from "@/lib/auth-cookie";
 import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useSidebarDrawer } from "./sidebar-drawer-context";
@@ -85,7 +85,8 @@ export function Topbar() {
       // Best-effort server-side logout (blacklists refresh token).
       await authApi.logout();
     } finally {
-      // Always clear client-side cookies regardless of server response.
+      stopSessionKeepAlive();
+      clearImpersonation();
       clearAuth();
     }
     router.push("/login");

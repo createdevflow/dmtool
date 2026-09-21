@@ -8,8 +8,8 @@ import { toast } from "@/components/ui/toaster";
 // AdminGuard is the client-side half of role enforcement. The backend
 // already returns 403 for non-admins (RequireRole middleware), but
 // doing a client-side check avoids the "load page → see 403" flash
-// and makes the route behavior obvious. We ping /api/admin/stats on
-// mount; if it 403s, redirect to /dashboard.
+// and makes the route behavior obvious. We ping GET /admin/me (admin.access)
+// on mount; if it 403s, redirect to /dashboard.
 function AdminGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [state, setState] = useState<"loading" | "ok" | "denied">("loading");
@@ -17,7 +17,7 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     adminApi
-      .stats()
+      .me()
       .then(() => {
         if (!cancelled) setState("ok");
       })

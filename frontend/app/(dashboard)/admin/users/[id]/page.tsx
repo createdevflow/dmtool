@@ -14,10 +14,9 @@ import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/toaster";
 import {
   adminApi, type AdminUserSummary, type AdminAuditEntry,
-  type Subscription, type AdminUserActivity
+  type Subscription, type AdminUserActivity, type AdminRole
 } from "@/lib/api-client";
 import { formatDate, formatDateTime } from "@/lib/utils";
-import { ImpersonationBanner } from "@/components/admin/impersonation-banner";
 import { setImpersonation } from "@/lib/auth-cookie";
 import { cn } from "@/lib/utils";
 
@@ -54,6 +53,7 @@ export default function AdminUserDetailPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<{ name: string; email: string; role: string } | null>(null);
+  const [staffRoles, setStaffRoles] = useState<AdminRole[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("profile");
 
   const refresh = useCallback(async () => {
@@ -84,6 +84,7 @@ export default function AdminUserDetailPage() {
       refresh();
       fetchActivity();
     }
+    adminApi.listRoles().then((r) => setStaffRoles(r.data.data || [])).catch(() => {});
   }, [id, refresh, fetchActivity]);
 
   if (loading || !user) {
@@ -178,8 +179,6 @@ export default function AdminUserDetailPage() {
 
   return (
     <div className="space-y-6">
-      <ImpersonationBanner />
-
       <button
         onClick={() => router.push("/admin/users")}
         className="text-xs text-slate-500 hover:text-slate-900 inline-flex items-center gap-1"
@@ -282,8 +281,9 @@ export default function AdminUserDetailPage() {
                       className="block w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
                     >
                       <option value="owner">owner</option>
-                      <option value="admin">admin</option>
-                      <option value="viewer">viewer</option>
+                      {staffRoles.map((sr) => (
+                        <option key={sr.code} value={sr.code}>{sr.name}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="flex gap-2">

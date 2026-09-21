@@ -14,11 +14,9 @@ const apiClient = axios.create({
 //
 // Token priority (phase 7):
 //   1. dmtool_impersonation_token cookie (admin user-support flow).
-//      The admin sets this cookie via setImpersonation() when they
-//      hit "Impersonate" on /admin/users/:id. While present, all
-//      requests carry the impersonation token. The banner's "Stop
-//      impersonation" clears the cookie and the regular dmtool_token
-//      cookie resumes carrying the admin's real token.
+//      While present, all requests carry the impersonation token —
+//      including Stop. POST /admin/users/:id/stop-impersonation is
+//      registered outside RequireRole("admin") so that JWT is accepted.
 //   2. dmtool_token cookie (phase 3 source of truth).
 //
 // The proxy at frontend/proxy.ts is configured to accept either
@@ -318,6 +316,14 @@ export type AdminAuditEntry = {
   metadata: Record<string, unknown> | null;
 };
 
+export type AdminRole = {
+  id: number;
+  code: string;
+  name: string;
+  description: string;
+  is_system: boolean;
+};
+
 export type AdminStats = {
   total_users: number;
   new_users_7d: number;
@@ -327,6 +333,7 @@ export type AdminStats = {
   canceled_subs: number;
   mrr_cents: number;
   arr_proxy_cents: number;
+  revenue_available?: boolean;
   plan_breakdown: Record<string, number>;
   user_growth_30d: Array<{ date: string; count: number }>;
   recent_activity: AdminAuditEntry[];
@@ -451,6 +458,9 @@ export type Metric = {
 };
 
 export const adminApi = {
+  me: () =>
+    apiClient.get<{ data: { role: string; permissions: string[] } }>("/admin/me"),
+  listRoles: () => apiClient.get<{ data: AdminRole[] }>("/admin/roles"),
   listUsers: (params: { page?: number; size?: number; search?: string; plan?: string; role?: string; mode?: string; status?: string } = {}) =>
     apiClient.get<{
       data: { users: AdminUserSummary[]; total: number; page: number; size: number };

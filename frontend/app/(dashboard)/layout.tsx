@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { DashboardModeProvider } from "@/components/dashboard/dashboard-mode-context";
 import { COOKIE_MODE } from "@/lib/auth-cookie";
 import { SidebarSwitch } from "@/components/admin/sidebar-switch";
+import { ImpersonationBanner } from "@/components/admin/impersonation-banner";
 
 export default async function DashboardLayout({
   children,
@@ -34,6 +35,7 @@ export default async function DashboardLayout({
                 <CommandMenu />
                 <MobileSidebar />
                 <Toaster />
+                <ImpersonationBanner />
                 {children}
               </main>
             </div>

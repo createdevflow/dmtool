@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { adminApi, type AdminUserSummary } from "@/lib/api-client";
+import { adminApi, type AdminUserSummary, type AdminRole } from "@/lib/api-client";
 import { formatDate } from "@/lib/utils";
 import { toast } from "@/components/ui/toaster";
 
@@ -22,6 +22,7 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
+  const [staffRoles, setStaffRoles] = useState<AdminRole[]>([]);
   const size = 25;
 
   const fetchUsers = useCallback(async () => {
@@ -48,6 +49,9 @@ export default function AdminUsersPage() {
   useEffect(() => {
     let cancelled = false;
     fetchUsers();
+    adminApi.listRoles().then((r) => {
+      if (!cancelled) setStaffRoles(r.data.data || []);
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [fetchUsers]);
 
@@ -144,8 +148,9 @@ export default function AdminUsersPage() {
                 >
                   <option value="">All roles</option>
                   <option value="owner">Owner</option>
-                  <option value="admin">Admin</option>
-                  <option value="viewer">Viewer</option>
+                  {staffRoles.map((sr) => (
+                    <option key={sr.code} value={sr.code}>{sr.name}</option>
+                  ))}
                 </select>
               </div>
               <div>

@@ -1,42 +1,38 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ShieldOff, ShieldAlert } from "lucide-react";
 import { adminApi } from "@/lib/api-client";
 import {
   COOKIE_IMPERSONATION_TOKEN,
+  IMPERSONATION_EVENT,
   readImpersonationTarget,
   clearImpersonation,
 } from "@/lib/auth-cookie";
 
 type Target = { id: number; email: string; name: string };
 
-// ImpersonationBanner is rendered on admin pages. It detects the
-// dmtool_impersonation_token cookie (set when the admin hits
-// "Impersonate" on /admin/users/:id) and surfaces a "you are
-// impersonating X" strip with a Stop button.
+// ImpersonationBanner lives in the dashboard layout so it shows on
+// every gated page (admin AND the impersonated user's dashboard)
+// while dmtool_impersonation_target is set.
 //
-// The check is cookie-based (not localStorage) so:
-//   - the banner is server-renderable and shows on first paint;
-//   - a full-page navigation while impersonating does not cause a
-//     flash of "no banner" before the client mounts;
-//   - the cookie path is consistent with the regular auth token
-//     and the CSRF defense in proxy.ts.
-//
-// When the admin stops, the cookie is cleared and the admin's own
-// dmtool_token cookie resumes carrying the real token on subsequent
-// requests.
+// Cookie + dmtool:impersonation event (fired by set/clearImpersonation)
+// so starting impersonation on /admin/users/:id updates a banner that
+// was already mounted in the layout.
 export function ImpersonationBanner() {
   const router = useRouter();
+  const pathname = usePathname();
   const [target, setTarget] = useState<Target | null>(null);
   const [stopping, setStopping] = useState(false);
   const [, startTransition] = useTransition();
 
   useEffect(() => {
-    // Re-read in case a sibling page set or cleared the cookie.
-    setTarget(readImpersonationTarget());
-  }, []);
+    const sync = () => setTarget(readImpersonationTarget());
+    sync();
+    window.addEventListener(IMPERSONATION_EVENT, sync);
+    return () => window.removeEventListener(IMPERSONATION_EVENT, sync);
+  }, [pathname]);
 
   if (!target) return null;
 
@@ -45,9 +41,8 @@ export function ImpersonationBanner() {
     try {
       await adminApi.stopImpersonation(target.id);
     } catch {
-      // Even if the audit-write fails, the client-side cookie clear
-      // is the primary effect; the next request will carry the
-      // admin's real token.
+      // Cookie clear is still the client session end if the audit
+      // write fails. Stop itself should 200 with an impersonation JWT.
     }
     clearImpersonation();
     setTarget(null);
@@ -59,7 +54,7 @@ export function ImpersonationBanner() {
     <div
       data-testid="impersonation-banner"
       data-impersonation-cookie={COOKIE_IMPERSONATION_TOKEN}
-      className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 flex items-center gap-3"
+      className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 flex items-center gap-3 mb-6"
     >
       <ShieldAlert className="w-5 h-5 text-amber-700 shrink-0" />
       <div className="flex-1 text-sm">

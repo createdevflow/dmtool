@@ -134,6 +134,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		utils.Unauthorized(c, "Invalid email or password")
 		return
 	}
+	if user.DisabledAt != nil {
+		utils.Unauthorized(c, "Invalid email or password")
+		return
+	}
 
 	// Log login event and update login tracking fields.
 	now := time.Now()
@@ -172,6 +176,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	user, err := h.userRepo.FindByID(token.UserID)
 	if err != nil || user == nil {
 		utils.Unauthorized(c, "User not found")
+		return
+	}
+	if user.DisabledAt != nil {
+		_ = h.tokenRepo.Delete(token.ID)
+		utils.Unauthorized(c, "Session expired")
 		return
 	}
 

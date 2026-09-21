@@ -37,7 +37,7 @@ func TestPhase1MigrationsSQLite(t *testing.T) {
 
 	migrator := database.Migrator()
 
-	for _, want := range []string{"plans", "subscriptions", "user_preferences", "admin_audit_logs"} {
+	for _, want := range []string{"plans", "subscriptions", "user_preferences", "admin_audit_logs", "permissions", "roles"} {
 		if !migrator.HasTable(want) {
 			t.Errorf("expected table %q to exist after RunMigrations", want)
 		}
@@ -65,6 +65,34 @@ func TestPhase1MigrationsSQLite(t *testing.T) {
 		"pro_monthly": {"Pro · Monthly", 3},
 		"pro_yearly":  {"Pro · Yearly", 3},
 	}
+	var perms []models.Permission
+	if err := database.Find(&perms).Error; err != nil {
+		t.Fatalf("query permissions failed: %v", err)
+	}
+	catalog := models.PermissionCatalog()
+	if len(perms) != len(catalog) {
+		t.Fatalf("expected %d seeded permissions, got %d", len(catalog), len(perms))
+	}
+	if err := SeedPermissions(database); err != nil {
+		t.Fatalf("second SeedPermissions failed: %v", err)
+	}
+	var permCount int64
+	if err := database.Model(&models.Permission{}).Count(&permCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if int(permCount) != len(catalog) {
+		t.Errorf("permission seed not idempotent: count=%d want %d", permCount, len(catalog))
+	}
+	gotCodes := map[string]bool{}
+	for _, p := range perms {
+		gotCodes[p.Code] = true
+	}
+	for _, want := range catalog {
+		if !gotCodes[want.Code] {
+			t.Errorf("missing seeded permission %q", want.Code)
+		}
+	}
+
 	for _, p := range plans {
 		want, ok := wantByCode[p.Code]
 		if !ok {
@@ -89,5 +117,41 @@ func TestPhase1MigrationsSQLite(t *testing.T) {
 	}
 	if recount != 3 {
 		t.Fatalf("expected plan count to remain 3 after re-seed, got %d", recount)
+	}
+
+	var role models.Role
+	if err := database.Where("code = ?", models.RoleCodeSuperAdmin).First(&role).Error; err != nil {
+		t.Fatalf("super admin role missing: %v", err)
+	}
+	if role.Name != "Super Admin" {
+		t.Errorf("super admin name = %q, want Super Admin", role.Name)
+	}
+	if !role.IsSystem {
+		t.Error("super admin is_system = false, want true")
+	}
+	var grantCount int64
+	if err := database.Model(&models.RolePermission{}).Where("role_id = ?", role.ID).Count(&grantCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if int(grantCount) != len(catalog) {
+		t.Fatalf("super admin grants = %d, want %d", grantCount, len(catalog))
+	}
+
+	if err := SuperAdminCatalogReady(database); err == nil {
+		t.Fatal("hard gate should fail with no users.role=admin")
+	}
+	if err := database.Create(&models.User{
+		Name: "A", Email: "a@x", PasswordHash: "x", Role: models.RoleAdmin,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := SuperAdminCatalogReady(database); err != nil {
+		t.Fatalf("hard gate after admin user: %v", err)
+	}
+	if err := database.Where("role_id = ?", role.ID).Delete(&models.RolePermission{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := SuperAdminCatalogReady(database); err == nil {
+		t.Fatal("hard gate should fail when Super Admin is missing catalog grants")
 	}
 }

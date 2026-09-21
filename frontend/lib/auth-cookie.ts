@@ -30,6 +30,15 @@ export const COOKIE_MODE = "dmtool_mode";
 export const COOKIE_IMPERSONATION_TOKEN = "dmtool_impersonation_token";
 export const COOKIE_IMPERSONATION_TARGET = "dmtool_impersonation_target";
 
+// Fired after setImpersonation / clearImpersonation so a banner already
+// mounted in the dashboard layout re-reads cookies without a full reload.
+export const IMPERSONATION_EVENT = "dmtool:impersonation";
+
+function notifyImpersonationChange(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(IMPERSONATION_EVENT));
+}
+
 function cookieOptions(days: number): string {
   const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
   // SameSite=Lax; Path=/; 7 days for token, 30 for user/mode.
@@ -71,11 +80,13 @@ export function setImpersonation(token: string, target: unknown, expiresInMinute
   const days = expiresInMinutes / (24 * 60);
   setAuthCookie(COOKIE_IMPERSONATION_TOKEN, token, days);
   setAuthCookie(COOKIE_IMPERSONATION_TARGET, JSON.stringify(target), days);
+  notifyImpersonationChange();
 }
 
 export function clearImpersonation(): void {
   clearAuthCookie(COOKIE_IMPERSONATION_TOKEN);
   clearAuthCookie(COOKIE_IMPERSONATION_TARGET);
+  notifyImpersonationChange();
 }
 
 export function readImpersonationToken(): string | null {

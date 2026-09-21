@@ -1,6 +1,8 @@
 package db
 
 import (
+	"errors"
+	"fmt"
 	"log"
 
 	"backend/internal/models"
@@ -38,6 +40,9 @@ func RunMigrations(database *gorm.DB) error {
 		&models.AdminAuditLog{},
 		&models.UserActivity{},
 		&models.SystemHealth{},
+		&models.Permission{},
+		&models.Role{},
+		&models.RolePermission{},
 	}
 
 	migrator := database.Migrator()
@@ -65,7 +70,13 @@ func RunMigrations(database *gorm.DB) error {
 	}
 
 	// Idempotent seed. Re-runs are no-ops because we use ON CONFLICT.
-	return SeedPlans(database)
+	if err := SeedPlans(database); err != nil {
+		return err
+	}
+	if err := SeedPermissions(database); err != nil {
+		return err
+	}
+	return SeedSuperAdmin(database)
 }
 
 // addUserDashboardModeColumn adds users.dashboard_mode if missing. SQLite
@@ -170,4 +181,113 @@ func SeedPlans(database *gorm.DB) error {
 	}
 	log.Printf("[migrate] seeded %d plan rows (no-op on re-run)\n", len(seeds))
 	return nil
+}
+
+// SeedPermissions inserts the staff permission catalog if absent.
+// Idempotent on code. Does not update name/description on re-run —
+// changing copy is a later migration if we need it.
+func SeedPermissions(database *gorm.DB) error {
+	catalog := models.PermissionCatalog()
+	for i := range catalog {
+		row := catalog[i]
+		stmt := database.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "code"}},
+			DoNothing: true,
+		}).Create(&row)
+		if stmt.Error != nil {
+			return stmt.Error
+		}
+	}
+	log.Printf("[migrate] seeded %d permission rows (no-op on re-run)\n", len(catalog))
+	return nil
+}
+
+// SeedSuperAdmin ensures the system Super Admin role (code=admin) exists
+// and has every catalog permission. Users with users.role=admin resolve
+// to this row by code. Idempotent.
+func SeedSuperAdmin(database *gorm.DB) error {
+	var role models.Role
+	err := database.Where("code = ?", models.RoleCodeSuperAdmin).First(&role).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		role = models.Role{
+			Code:        models.RoleCodeSuperAdmin,
+			Name:        "Super Admin",
+			Description: "Full staff access. System role; last holder cannot be demoted.",
+			IsSystem:    true,
+		}
+		if err := database.Create(&role).Error; err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		if err := database.Model(&role).Updates(map[string]any{
+			"name":        "Super Admin",
+			"description": "Full staff access. System role; last holder cannot be demoted.",
+			"is_system":   true,
+		}).Error; err != nil {
+			return err
+		}
+	}
+
+	catalog := models.PermissionCatalog()
+	for _, p := range catalog {
+		var perm models.Permission
+		if err := database.Where("code = ?", p.Code).First(&perm).Error; err != nil {
+			return err
+		}
+		join := models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}
+		if err := database.Clauses(clause.OnConflict{DoNothing: true}).Create(&join).Error; err != nil {
+			return err
+		}
+	}
+	log.Printf("[migrate] super admin role id=%d granted %d catalog perms\n", role.ID, len(catalog))
+	return nil
+}
+
+// SuperAdminCatalogReady is the Step 5 hard gate. Every catalog code
+// must be on the Super Admin role, and at least one user.role=admin
+// exists (they resolve by matching roles.code).
+func SuperAdminCatalogReady(database *gorm.DB) error {
+	if database == nil {
+		return errGate("nil db")
+	}
+	catalog := models.PermissionCatalog()
+	var role models.Role
+	if err := database.Where("code = ?", models.RoleCodeSuperAdmin).First(&role).Error; err != nil {
+		return errGate("super admin role %q missing: %v", models.RoleCodeSuperAdmin, err)
+	}
+	var codes []string
+	if err := database.Table("permissions").
+		Select("permissions.code").
+		Joins("JOIN role_permissions ON role_permissions.permission_id = permissions.id").
+		Where("role_permissions.role_id = ?", role.ID).
+		Pluck("code", &codes).Error; err != nil {
+		return errGate("list super admin perms: %v", err)
+	}
+	have := map[string]bool{}
+	for _, c := range codes {
+		have[c] = true
+	}
+	var missing []string
+	for _, p := range catalog {
+		if !have[p.Code] {
+			missing = append(missing, p.Code)
+		}
+	}
+	if len(missing) > 0 {
+		return errGate("super admin missing permissions: %v", missing)
+	}
+	var n int64
+	if err := database.Model(&models.User{}).Where("role = ?", models.RoleAdmin).Count(&n).Error; err != nil {
+		return errGate("count admin users: %v", err)
+	}
+	if n == 0 {
+		return errGate("no users with role=%s to resolve to super admin", models.RoleAdmin)
+	}
+	return nil
+}
+
+func errGate(format string, args ...any) error {
+	return fmt.Errorf("super-admin hard gate: "+format, args...)
 }

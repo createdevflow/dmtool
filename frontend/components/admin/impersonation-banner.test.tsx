@@ -24,6 +24,7 @@ const mockRefresh = vi.fn();
 const mockStopImpersonation = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: mockRefresh }),
+  usePathname: () => "/dashboard/combined",
 }));
 
 vi.mock("@/lib/api-client", () => ({
@@ -147,5 +148,20 @@ describe("ImpersonationBanner", () => {
       expect(screen.queryByTestId("impersonation-banner")).toBeNull();
     });
     expect(document.cookie).not.toMatch(/dmtool_impersonation_target=/);
+  });
+
+  it("appears after impersonation starts on an already-mounted banner", async () => {
+    render(<ImpersonationBanner />);
+    expect(screen.queryByTestId("impersonation-banner")).toBeNull();
+
+    setImpersonationCookie({
+      id: 3,
+      email: "dana@example.com",
+      name: "Dana",
+    });
+
+    expect(await screen.findByTestId("impersonation-banner")).toHaveTextContent(
+      "Impersonating Dana",
+    );
   });
 });

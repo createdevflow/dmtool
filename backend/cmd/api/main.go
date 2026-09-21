@@ -173,6 +173,7 @@ func main() {
 	// ── 9. Protected API routes ──────────────────────────────────────────────
 	api := r.Group("/api")
 	api.Use(middleware.JWTAuth(publicKey))
+	api.Use(middleware.RejectDisabled(userRepo))
 
 	registerProjectRoutes(api, projectRepo, database, encKey, metricRepo, oauthRepo, seoRepo, dataForSEOService, rapidAPIService, crawlerService, entitlementsSvc)
 	registerDashboardRoutes(api, projectRepo, metricRepo, insightRepo, seoRepo, taskRepo)
@@ -261,8 +262,8 @@ func registerAuthRoutes(g *gin.RouterGroup, db *gorm.DB,
 	g.POST("/login", h.Login)
 	g.POST("/refresh", h.Refresh)
 	g.POST("/logout", h.Logout)
-	g.GET("/me", middleware.JWTAuth(pubKey), h.Me)
-	g.PATCH("/me", middleware.JWTAuth(pubKey), h.UpdateMe)
+	g.GET("/me", middleware.JWTAuth(pubKey), middleware.RejectDisabled(userRepo), h.Me)
+	g.PATCH("/me", middleware.JWTAuth(pubKey), middleware.RejectDisabled(userRepo), h.UpdateMe)
 }
 func registerBillingRoutes(g *gin.RouterGroup, db *gorm.DB,
 	userRepo repository.UserRepository,
@@ -281,10 +282,11 @@ func registerBillingRoutes(g *gin.RouterGroup, db *gorm.DB,
 	g.GET("/billing/me", h.Me)
 }
 
-// registerAdminRoutes wires /api/admin/* under JWT + RequireRole("admin").
-// The admin group sits inside the same /api prefix as the other routes;
-// the RequireRole middleware applied here is what gates it.
-func registerAdminRoutes(g *gin.RouterGroup, db *gorm.DB,
+// registerAdminRoutes wires /api/admin/*. Stop impersonation stays
+// outside the staff-permission group. If the Super Admin hard gate
+// fails, RequireRole("admin") stays on and permission middleware is
+// not applied (no lockout from a partial seed).
+func registerAdminRoutes(g *gin.RouterGroup, database *gorm.DB,
 	userRepo repository.UserRepository,
 	subRepo repository.SubscriptionRepository,
 	planRepo repository.PlanRepository,
@@ -292,36 +294,63 @@ func registerAdminRoutes(g *gin.RouterGroup, db *gorm.DB,
 	projRepo repository.ProjectRepository,
 	activityRepo repository.UserActivityRepository,
 	privKey *rsa.PrivateKey) {
-	h := handlers.NewAdminHandler(db, userRepo, subRepo, planRepo, auditRepo, projRepo, activityRepo, privKey)
-	admin := g.Group("/admin")
-	admin.Use(middleware.RequireRole(models.RoleAdmin))
-	{
-		admin.GET("/users", h.ListUsers)
-		admin.GET("/users/export", h.ExportUsers)
-		admin.GET("/users/:id", h.GetUser)
-		admin.GET("/users/:id/activity", h.GetUserActivity)
-		admin.PATCH("/users/:id", h.UpdateUser)
-		admin.POST("/users/:id/reset-password", h.ResetPassword)
-		admin.POST("/users/:id/suspend", h.SuspendUser)
-		admin.POST("/users/:id/unsuspend", h.UnsuspendUser)
-		admin.POST("/users/:id/impersonate", h.ImpersonateUser)
-		admin.POST("/users/:id/stop-impersonation", h.StopImpersonation)
-		admin.GET("/plans", h.ListPlans)
-		admin.POST("/plans", h.CreatePlan)
-		admin.PATCH("/plans/:id", h.UpdatePlan)
-		admin.GET("/audit-log", h.ListAuditLog)
-		admin.GET("/stats", h.Stats)
-		admin.GET("/projects", h.ListProjects)
-		admin.GET("/projects/stats", h.GetProjectStats)
-		admin.GET("/projects/:id", h.GetProject)
-		admin.GET("/projects/:id/metrics", h.GetProjectMetrics)
-		admin.GET("/projects/:id/seo", h.GetProjectSEO)
-		admin.GET("/projects/:id/social", h.GetProjectSocial)
-		admin.GET("/platform/seo-health", h.PlatformSEOHealth)
-		admin.GET("/platform/social-health", h.PlatformSocialHealth)
-		admin.GET("/platform/health", h.PlatformHealth)
-		admin.GET("/integrations/status", h.IntegrationsStatus)
+	h := handlers.NewAdminHandler(database, userRepo, subRepo, planRepo, auditRepo, projRepo, activityRepo, privKey)
+	g.POST("/admin/users/:id/stop-impersonation", middleware.AllowStopImpersonation(), h.StopImpersonation)
+
+	gateErr := db.SuperAdminCatalogReady(database)
+	usePerms := gateErr == nil
+	if gateErr != nil {
+		log.Printf("[admin] HARD GATE FAILED — keeping RequireRole: %v", gateErr)
+	} else {
+		log.Printf("[admin] hard gate ok — permission guard enabled")
 	}
+
+	admin := g.Group("/admin")
+	if usePerms {
+		admin.Use(middleware.LoadStaffPermissions(database))
+	} else {
+		admin.Use(middleware.RequireRole(models.RoleAdmin))
+	}
+
+	p := func(code string, fn gin.HandlerFunc) []gin.HandlerFunc {
+		if usePerms {
+			return []gin.HandlerFunc{middleware.RequirePermission(code), fn}
+		}
+		return []gin.HandlerFunc{fn}
+	}
+	any := func(fn gin.HandlerFunc, codes ...string) []gin.HandlerFunc {
+		if usePerms {
+			return append([]gin.HandlerFunc{middleware.RequireAnyPermission(codes...)}, fn)
+		}
+		return []gin.HandlerFunc{fn}
+	}
+
+	admin.GET("/me", p(models.PermAdminAccess, h.AdminMe)...)
+	admin.GET("/roles", p(models.PermUsersRead, h.ListRoles)...)
+	admin.GET("/users", p(models.PermUsersRead, h.ListUsers)...)
+	admin.GET("/users/export", p(models.PermUsersExport, h.ExportUsers)...)
+	admin.GET("/users/:id", p(models.PermUsersRead, h.GetUser)...)
+	admin.GET("/users/:id/activity", p(models.PermUsersActivityRead, h.GetUserActivity)...)
+	admin.PATCH("/users/:id", p(models.PermUsersUpdate, h.UpdateUser)...)
+	admin.POST("/users/:id/reset-password", p(models.PermUsersPasswordReset, h.ResetPassword)...)
+	admin.POST("/users/:id/suspend", p(models.PermUsersSuspend, h.SuspendUser)...)
+	admin.POST("/users/:id/unsuspend", p(models.PermUsersSuspend, h.UnsuspendUser)...)
+	admin.POST("/users/:id/impersonate", p(models.PermUsersImpersonate, h.ImpersonateUser)...)
+	admin.GET("/plans", p(models.PermPlansRead, h.ListPlans)...)
+	admin.POST("/plans", p(models.PermPlansWrite, h.CreatePlan)...)
+	admin.PATCH("/plans/:id", p(models.PermPlansWrite, h.UpdatePlan)...)
+	admin.GET("/audit-log", p(models.PermAuditRead, h.ListAuditLog)...)
+	admin.GET("/stats", any(h.Stats, models.PermStatsOverviewRead, models.PermStatsRevenueRead)...)
+	admin.GET("/projects", p(models.PermProjectsRead, h.ListProjects)...)
+	admin.GET("/projects/stats", p(models.PermProjectsRead, h.GetProjectStats)...)
+	admin.GET("/projects/:id", p(models.PermProjectsRead, h.GetProject)...)
+	admin.GET("/projects/:id/metrics", p(models.PermProjectsRead, h.GetProjectMetrics)...)
+	admin.GET("/projects/:id/seo", p(models.PermProjectsRead, h.GetProjectSEO)...)
+	admin.GET("/projects/:id/social", p(models.PermProjectsRead, h.GetProjectSocial)...)
+	admin.GET("/platform/seo-health", p(models.PermPlatformSEORead, h.PlatformSEOHealth)...)
+	admin.GET("/platform/social-health", p(models.PermPlatformSocialRead, h.PlatformSocialHealth)...)
+	admin.GET("/platform/health", p(models.PermPlatformHealthRead, h.PlatformHealth)...)
+	admin.GET("/integrations/status", p(models.PermIntegrationsRead, h.IntegrationsStatus)...)
 }
 func registerProjectRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepository, database *gorm.DB, encKey []byte,
 	metricRepo repository.MetricRepository, oauthRepo repository.OAuthRepository, seoRepo repository.SEORepository,

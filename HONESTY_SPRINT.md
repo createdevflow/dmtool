@@ -207,13 +207,77 @@ Closed the 3 honesty-rule breakers from Day 9–10. Parked: onboarding copy tone
 
 Did not push.
 
+### Impersonation stop (2026-09-16)
+
+`POST /api/admin/users/:id/stop-impersonation` is no longer behind `RequireRole("admin")`. The banner sends the impersonation JWT; the route accepts that token (or a real admin token) and writes `impersonate.stop` with actor = impersonator. Banner is in the dashboard layout (all gated pages), not only `/admin/users/[id]`. Cookie clear is the session end.
+
+Did not push. Did not start RBAC / suspend-blocks-login.
+
+**Follow-up (do not drop; not this RBAC phase):** impersonation JWT revocation. Stop does not kill the access token. A copied impersonation JWT still hits user routes until its 30-minute TTL. Later: `jti` on impersonation tokens + a small revoked/ended-session check, impersonation-only — not a global JWT denylist.
+
+---
+
+## Admin staff RBAC (internal only; no customer team seats)
+
+Locked: `AllowStopImpersonation` is a **one-off**. Staff routes stay “admin/staff token + permission.” Impersonation JWTs never get staff permissions. Do not put Stop back inside the permission group.
+
+### Step 5 — Super Admin + permission guard (2026-09-16)
+
+Status: done
+
+- [x] Backup `backend/dev.db` → `.mimocode/dev.db.bak-step5` (237568 bytes) before schema/guard cutover
+- [x] `roles` + `role_permissions`; Super Admin `code=admin`, display name Super Admin, `is_system`
+- [x] Seed Super Admin with full catalog (19 codes: stats split + `users.role.assign`; no `stats.read`)
+- [x] Hard gate **before** dropping `RequireRole`: Super Admin has every catalog code; ≥1 `users.role=admin` (id 1 and 8). Passed. API log: `hard gate ok — permission guard enabled`
+- [x] Staff perms from `users.role` → `roles.code` (DB every request), not JWT `claims.Role`
+- [x] `GET /admin/me` = `admin.access` (AdminGuard no longer pings stats)
+- [x] Route map: users/plans/audit/projects/platform/integrations + stats any(overview|revenue)
+- [x] Stats redacts MRR/ARR **and** `plan_breakdown` without `stats.revenue.read`; `revenue_available`
+- [x] PATCH role extra `users.role.assign` only when the value actually changes
+- [x] Last Super Admin cannot be demoted; system-role users cannot be suspended
+- [x] Stop stays outside the permission group (`AllowStopImpersonation`)
+- [x] Failed-gate fallback: keep `RequireRole`; `StaffHas`/redaction no-op so Super Admin is not locked
+- [x] `bootstrap_admin` after cutover: `admin already exists id=8 email=admin@dmtool.local (no change)`
+- [x] User list/detail role dropdowns load `GET /admin/roles`
+
+Notes:
+- 2026-09-16: Cutover on live `dev.db`. Leftover `permissions.stats.read` row from Step 4 is **not** granted to Super Admin (orphan; catalog is 19). Did not DELETE.
+- Lockout: owner JWT `/admin/me` 403; impersonation JWT `/admin/me` 403; Stop 200; Super Admin login `/admin/me` 200 with 19 perms and `/admin/stats` `revenue_available=true`; suspend Super Admin 400 `CANNOT_SUSPEND_ADMIN`. Unit tests: last-SA demote blocked; two-SA demote allowed; stats not redacted when perms not loaded.
+- Did not push. Step 6 (Roles UI) not started.
+
+### Step 4 — permission catalog (schema + seed only)
+
+Status: done (2026-09-16). `permissions` table + `PermissionCatalog()` / `SeedPermissions` (insert-if-absent). Stop is not a permission.
+
+### Step 3 prompt — suspend actually blocks (next implementation)
+
+Status: done (2026-09-16). Login/Refresh refuse `disabled_at`. `RejectDisabled` after JWTAuth on `/api` and `/auth/me`. Impersonation tokens 401 if target **or** impersonator is disabled. Stop impersonation skips the check so a disabled target does not trap the admin. Did not push. Do this before permission tables / guard swap.
+
+`JWTAuth` is stateless. It copies `user_id` / `user_role` / `is_impersonation` / `impersonator_id` from the JWT and never loads the user row. Impersonation JWTs have **target** `user_id` and **admin** `impersonator_id`. Naive “reject if `DisabledAt` on `user_id`” is wrong:
+
+- Suspend the customer while impersonating them → Stop uses the target JWT → lookup sees the target disabled → Stop 401s again.
+- Suspend the admin while they are impersonating → product requests still run as the target → disabled admin keeps acting until TTL.
+
+**Required behavior**
+
+1. **Login and Refresh** — if `users.disabled_at` is set, do not issue tokens. Same message as bad password is acceptable (do not leak “this account is suspended” unless that is already the product tone).
+2. **Per-request hook after `JWTAuth`** — load the user row once (this is also the future RBAC lookup hook). Do **not** clone `AllowStopImpersonation` per route.
+3. **Normal access token** — if that user is disabled, 401. Covers remaining 15-minute tokens after Login/Refresh already refuse.
+4. **Impersonation token on product / staff-gated routes** — 401 if **target** is disabled **or** **impersonator** is disabled.
+5. **Stop impersonation only** (`AllowStopImpersonation` path) — always allowed if the impersonation (or admin) JWT is valid. Do **not** reject Stop because the target is disabled. Optionally still reject if the **impersonator** is disabled (they should not keep a privileged session); if that makes Stop unreachable, cookie-clear on the client remains the fallback — prefer allowing Stop so the admin can leave.
+6. **Scope** — this hook belongs on authenticated `/api` (not admin-only). A suspended customer must not keep using `/api/projects` with a leftover JWT. Impersonation product calls go through the same path.
+7. **Out of scope for Step 3** — permission catalog, roles tables, `RequireRole` swap, Roles UI, impersonation `jti` revocation, Honesty Sprint display cleanup.
+
+**Done when:** suspend a non-admin → that user cannot Login/Refresh and existing access token dies on the next API call; impersonating them still lets Stop return 200; suspending the admin ends *their* leftover access token and blocks further impersonation requests that carry their `impersonator_id`; `RequireRole` / permissions untouched.
+
 ---
 
 ## Explicitly not doing (leave parked)
 
 - [ ] DataForSEO / RapidAPI real HTTP
 - [ ] Stripe
-- [ ] Admin suspend-blocks-login / activity logging / commit admin UI
+- [ ] Admin activity logging (beyond login) / remaining admin UI polish
+- [ ] Impersonation JWT revocation (`jti` + ended-session check) — logged 2026-09-16, after this RBAC phase
 - [ ] Automations engine
 - [ ] CRM / campaigns
 - [ ] Full-site crawler, SERP tracker, backlink index

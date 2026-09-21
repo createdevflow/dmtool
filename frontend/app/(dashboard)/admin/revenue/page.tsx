@@ -29,6 +29,9 @@ export default function AdminRevenuePage() {
   if (!stats) {
     return <div className="text-slate-500 py-12 text-center">Revenue data unavailable.</div>;
   }
+  if (stats.revenue_available === false) {
+    return <div className="text-slate-500 py-12 text-center">You do not have access to revenue figures.</div>;
+  }
 
   const fmtDollars = (cents: number) =>
     cents === 0 ? "$0" : `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0 })}`;

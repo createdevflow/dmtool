@@ -59,3 +59,40 @@ func RequireRole(allowed ...string) gin.HandlerFunc {
 func MustRoleAdmin() gin.HandlerFunc {
 	return RequireRole(models.RoleAdmin)
 }
+
+// AllowStopImpersonation gates POST /api/admin/users/:id/stop-impersonation.
+// That route cannot sit behind RequireRole("admin"): while impersonating,
+// the client sends the impersonation JWT (target's role, IsImpersonation=true),
+// which RequireRole rejects. Allow either:
+//
+//   - a real admin token (not impersonating), so CLI/verifiers keep working
+//   - a valid impersonation token (IsImpersonation + ImpersonatorID set)
+func AllowStopImpersonation() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if isImp, _ := c.Get("is_impersonation"); isImp != nil {
+			if b, ok := isImp.(bool); ok && b {
+				impID, _ := c.Get("impersonator_id")
+				id, _ := impID.(uint)
+				if id == 0 {
+					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+						"success": false,
+						"error":   gin.H{"code": "FORBIDDEN", "message": "Invalid impersonation token"},
+					})
+					return
+				}
+				c.Next()
+				return
+			}
+		}
+		role, _ := c.Get("user_role")
+		roleStr, _ := role.(string)
+		if roleStr == models.RoleAdmin {
+			c.Next()
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   gin.H{"code": "FORBIDDEN", "message": "Admin access required"},
+		})
+	}
+}

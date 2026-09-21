@@ -71,6 +71,9 @@ func Init(databaseURL string, isDev bool) *gorm.DB {
 			&models.Subscription{},
 			&models.UserPreference{},
 			&models.AdminAuditLog{},
+			&models.Permission{},
+			&models.Role{},
+			&models.RolePermission{},
 		); err != nil {
 			log.Fatalf("[db] AutoMigrate failed: %v", err)
 		}

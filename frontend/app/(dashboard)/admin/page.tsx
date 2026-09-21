@@ -40,7 +40,8 @@ export default function AdminOverviewPage() {
   const fmtDollars = (cents: number) =>
     cents === 0 ? "$0" : `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0 })}`;
 
-  const mrrIsStub = stats.mrr_cents === 0 && stats.active_subs > 0;
+  const revenueAvailable = stats.revenue_available !== false;
+  const mrrIsStub = revenueAvailable && stats.mrr_cents === 0 && stats.active_subs > 0;
 
   const healthColor = (h: string) => {
     switch (h) {
@@ -92,6 +93,7 @@ export default function AdminOverviewPage() {
           icon={CreditCard}
           sub={`${stats.trialing_subs} trialing · ${stats.canceled_subs} canceled`}
         />
+        {revenueAvailable ? (
         <StatCard
           label="MRR"
           value={fmtDollars(stats.mrr_cents)}
@@ -99,6 +101,7 @@ export default function AdminOverviewPage() {
           sub={`ARR proxy: ${fmtDollars(stats.arr_proxy_cents)}`}
           warn={mrrIsStub}
         />
+        ) : null}
       </div>
 
       {/* ── Project Stats Row ── */}

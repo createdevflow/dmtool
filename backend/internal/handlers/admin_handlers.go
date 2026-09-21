@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"backend/internal/middleware"
 	"backend/internal/models"
 	"backend/internal/repository"
 	"backend/internal/utils"
@@ -247,9 +248,24 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 		}
 		u.Email = *req.Email
 	}
-	if req.Role != nil {
-		if *req.Role != models.RoleOwner && *req.Role != models.RoleAdmin && *req.Role != models.RoleViewer {
-			utils.BadRequest(c, "Role must be owner, admin, or viewer", "INVALID_ROLE")
+	if req.Role != nil && *req.Role != u.Role {
+		if middleware.StaffPermsLoaded(c) && !middleware.StaffHas(c, models.PermUsersRoleAssign) {
+			utils.Forbidden(c, "Assigning roles requires users.role.assign")
+			return
+		}
+		if *req.Role == models.RoleViewer {
+			utils.BadRequest(c, "viewer is not a staff role", "INVALID_ROLE")
+			return
+		}
+		if *req.Role != models.RoleOwner {
+			var staffRole models.Role
+			if err := h.db.Where("code = ?", *req.Role).First(&staffRole).Error; err != nil {
+				utils.BadRequest(c, "Unknown role", "INVALID_ROLE")
+				return
+			}
+		}
+		if h.isSystemRole(u.Role) && h.countUsersWithRole(u.Role) <= 1 {
+			utils.BadRequest(c, "Cannot demote the last Super Admin", "LAST_SUPER_ADMIN")
 			return
 		}
 		u.Role = *req.Role
@@ -345,8 +361,8 @@ func (h *AdminHandler) SuspendUser(c *gin.Context) {
 		utils.NotFound(c, "User not found")
 		return
 	}
-	if u.Role == models.RoleAdmin {
-		utils.BadRequest(c, "Cannot suspend admin users", "CANNOT_SUSPEND_ADMIN")
+	if h.isSystemRole(u.Role) {
+		utils.BadRequest(c, "Cannot suspend a Super Admin", "CANNOT_SUSPEND_ADMIN")
 		return
 	}
 	if u.DisabledAt != nil {
@@ -507,27 +523,51 @@ func (h *AdminHandler) ImpersonateUser(c *gin.Context) {
 	}, nil)
 }
 
-// StopImpersonation writes the audit row and returns the admin's own
-// (unchanged) profile so the frontend can swap the token back. The
-// admin's token was not invalidated — the swap is purely client-side.
+// StopImpersonation writes impersonate.stop and tells the client to
+// drop the impersonation cookie. Access tokens are stateless RS256
+// with no denylist — the impersonation JWT stays valid until its
+// 30-minute TTL. Ending the session is cookie-clear + audit.
+//
+// Two callers:
+//   - Browser banner: impersonation JWT. user_id is the target,
+//     impersonator_id is the admin. Actor must be the admin.
+//   - CLI / phase7_verify: real admin JWT. user_id is the admin;
+//     target comes from the body or :id.
 func (h *AdminHandler) StopImpersonation(c *gin.Context) {
-	adminID, _ := c.Get("user_id")
-	aID, _ := adminID.(uint)
+	paramID, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 
-	// In a real session the frontend reads impersonator_id from the
-	// impersonation token and passes it back. We accept it as a body
-	// param for accuracy; falling back to the admin's own id keeps
-	// the endpoint usable even if the frontend forgot.
-	var body struct {
-		TargetID uint `json:"target_id"`
+	isImp, _ := c.Get("is_impersonation")
+	impersonating, _ := isImp.(bool)
+
+	var actorID, targetID uint
+	if impersonating {
+		rawImp, _ := c.Get("impersonator_id")
+		actorID, _ = rawImp.(uint)
+		rawUID, _ := c.Get("user_id")
+		targetID, _ = rawUID.(uint)
+		if paramID != 0 && uint(paramID) != targetID {
+			utils.BadRequest(c, "Impersonation token does not match this user", "IMPERSONATION_MISMATCH")
+			return
+		}
+	} else {
+		rawUID, _ := c.Get("user_id")
+		actorID, _ = rawUID.(uint)
+		var body struct {
+			TargetID uint `json:"target_id"`
+		}
+		_ = c.ShouldBindJSON(&body)
+		targetID = body.TargetID
+		if targetID == 0 {
+			targetID = uint(paramID)
+		}
 	}
-	_ = c.ShouldBindJSON(&body)
-	targetID := body.TargetID
-	if targetID == 0 {
-		targetID = aID
+	if actorID == 0 {
+		utils.Unauthorized(c, "Authentication required")
+		return
 	}
-	h.writeAudit(c, targetID, models.AdminAuditActionImpersonateStop, gin.H{
-		"admin_id": aID,
+
+	h.writeAuditAs(actorID, targetID, models.AdminAuditActionImpersonateStop, gin.H{
+		"admin_id": actorID,
 	})
 
 	utils.Success(c, gin.H{
@@ -1015,6 +1055,7 @@ type adminStatsResponse struct {
 	PlanBreakdown    map[string]int64            `json:"plan_breakdown"`
 	UserGrowth30d    []adminUserGrowthPoint      `json:"user_growth_30d"`
 	RecentActivity   []models.AdminAuditLog      `json:"recent_activity"`
+	RevenueAvailable bool                        `json:"revenue_available"`
 	// Phase 3: project stats + feature adoption
 	TotalProjects   int64              `json:"total_projects"`
 	ProjectsNew7d   int64              `json:"projects_new_7d"`
@@ -1181,6 +1222,13 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 		var projectsWithInsights int64
 		h.db.Table("insights").Distinct("project_id").Count(&projectsWithInsights)
 		out.FeatureAdoption["ai_content"] = float64(projectsWithInsights) / float64(out.TotalProjects) * 100
+	}
+
+	out.RevenueAvailable = !middleware.StaffPermsLoaded(c) || middleware.StaffHas(c, models.PermStatsRevenueRead)
+	if !out.RevenueAvailable {
+		out.MRRCents = 0
+		out.ARRProxyCents = 0
+		out.PlanBreakdown = map[string]int64{}
 	}
 
 	utils.Success(c, out, nil)
@@ -1494,6 +1542,56 @@ func (h *AdminHandler) IntegrationsStatus(c *gin.Context) {
 	}, nil)
 }
 
+// AdminMe is the cheap shell check: admin.access only.
+func (h *AdminHandler) AdminMe(c *gin.Context) {
+	raw, _ := c.Get("auth_user")
+	user, _ := raw.(*models.User)
+	perms := []string{}
+	if middleware.StaffPermsLoaded(c) {
+		// Reconstruct list from the map without exporting the key.
+		for _, p := range models.PermissionCatalog() {
+			if middleware.StaffHas(c, p.Code) {
+				perms = append(perms, p.Code)
+			}
+		}
+	}
+	roleCode := ""
+	if user != nil {
+		roleCode = user.Role
+	}
+	utils.Success(c, gin.H{
+		"role":        roleCode,
+		"permissions": perms,
+	}, nil)
+}
+
+// ListRoles returns staff roles (not customer owner/viewer).
+func (h *AdminHandler) ListRoles(c *gin.Context) {
+	var roles []models.Role
+	if err := h.db.Order("is_system DESC, code ASC").Find(&roles).Error; err != nil {
+		utils.InternalError(c, "Failed to list roles")
+		return
+	}
+	utils.Success(c, roles, nil)
+}
+
+func (h *AdminHandler) isSystemRole(code string) bool {
+	if code == "" || code == models.RoleOwner || code == models.RoleViewer {
+		return false
+	}
+	var r models.Role
+	if err := h.db.Where("code = ?", code).First(&r).Error; err != nil {
+		return code == models.RoleAdmin
+	}
+	return r.IsSystem
+}
+
+func (h *AdminHandler) countUsersWithRole(code string) int64 {
+	var n int64
+	h.db.Model(&models.User{}).Where("role = ?", code).Count(&n)
+	return n
+}
+
 // ── helpers ───────────────────────────────────────────────────────────
 
 // writeAudit persists a row in admin_audit_logs. targetID may be 0 for
@@ -1503,6 +1601,10 @@ func (h *AdminHandler) IntegrationsStatus(c *gin.Context) {
 func (h *AdminHandler) writeAudit(c *gin.Context, targetID uint, action string, metadata map[string]any) {
 	actorID, _ := c.Get("user_id")
 	aID, _ := actorID.(uint)
+	h.writeAuditAs(aID, targetID, action, metadata)
+}
+
+func (h *AdminHandler) writeAuditAs(actorID, targetID uint, action string, metadata map[string]any) {
 	var metaJSON datatypes.JSON
 	if metadata == nil {
 		metaJSON = datatypes.JSON(`{}`)
@@ -1516,7 +1618,7 @@ func (h *AdminHandler) writeAudit(c *gin.Context, targetID uint, action string, 
 		}
 	}
 	row := &models.AdminAuditLog{
-		ActorUserID:  aID,
+		ActorUserID:  actorID,
 		TargetUserID: targetID,
 		Action:       action,
 		Metadata:     metaJSON,

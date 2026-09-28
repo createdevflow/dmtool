@@ -2,9 +2,9 @@
 
 import dynamic from "next/dynamic";
 import { 
-  Plus, Search, Sparkles, Send, BarChart3, TrendingUp,
+  Plus, Search, Send, BarChart3, TrendingUp,
   Activity, Zap, Target, MousePointer2, ChevronRight,
-  Loader2, AlertCircle, CheckCircle2, Info, ArrowUpRight,
+  Loader2, CheckCircle2, Info, ArrowUpRight,
   Briefcase, Lightbulb, UserCheck, ShieldCheck
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -30,11 +30,6 @@ const YAxis = dynamic(() => import("recharts").then((m) => m.YAxis), { ssr: fals
 const CartesianGrid = dynamic(() => import("recharts").then((m) => m.CartesianGrid), { ssr: false });
 const Tooltip = dynamic(() => import("recharts").then((m) => m.Tooltip), { ssr: false });
 
-const MotionDiv = dynamic(
-  () => import("framer-motion").then((m) => m.motion.div),
-  { ssr: false }
-);
-
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { dashboardApi } from "@/lib/api-client";
@@ -42,10 +37,13 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { GrowthSnapshot } from "@/components/dashboard/growth-snapshot";
 import { AIInsightCard } from "@/components/dashboard/ai-insight-card";
 import { ActionCenterTask } from "@/components/dashboard/action-center-task";
+import { SectionTabs, type SectionTab } from "@/components/dashboard/section-tabs";
+import { useDashboardMode } from "@/components/dashboard/dashboard-mode-context";
 import { toast } from "@/components/ui/toaster";
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { mode } = useDashboardMode();
   const [metrics, setMetrics] = useState<any[]>([]);
   const [insights, setInsights] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
@@ -53,7 +51,6 @@ export default function DashboardPage() {
   const [project, setProject] = useState<any>(null);
   const [snapshot, setSnapshot] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'website' | 'social' | 'combined'>('combined');
 
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -109,12 +106,6 @@ export default function DashboardPage() {
         }));
         setTasks(formattedTasks);
         setSnapshot(sRes.data?.data || null);
-
-
-
-
-        if (selected.goal === 'seo') setViewMode('website');
-        else if (selected.goal === 'social') setViewMode('social');
       }
     } catch (err) {
       console.error("Failed to fetch dashboard data", err);
@@ -169,7 +160,13 @@ export default function DashboardPage() {
 
   const doneCount = tasks.filter(t => t.isDone).length;
   const progressPercent = tasks.length > 0 ? (doneCount / tasks.length) * 100 : 0;
-  const isSimulated = snapshot?.is_simulated ?? false;
+
+  // SectionTabs: Overview (this page) + Tools (the old card-grid at
+  // /dashboard/<mode>, still driven by the app-wide mode).
+  const dashboardTabs: SectionTab[] = [
+    { label: "Overview", href: "/dashboard", match: (p) => p === "/dashboard" },
+    { label: "Tools", href: `/dashboard/${mode}` },
+  ];
 
   return (
     <div className="space-y-16 max-w-7xl mx-auto pb-40 pt-4">
@@ -182,67 +179,19 @@ export default function DashboardPage() {
         onAddSource={() => router.push('/onboarding')} 
       />
 
-      {isSimulated && (
-        <MotionDiv 
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
-          className="bg-amber-50 border border-amber-100 rounded-2xl p-4 flex items-center justify-between gap-4"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 shrink-0">
-              <AlertCircle className="w-4 h-4" />
-            </div>
-            <p className="text-sm text-amber-800 font-medium">
-              <span className="font-bold">Simulated Data Active:</span> Some social metrics are currently estimated. Connect your Meta API for live accuracy.
-            </p>
-          </div>
-          <Button 
-            variant="outline" 
-            size="sm"
-            className="rounded-lg bg-white border-amber-200 text-amber-700 hover:bg-amber-50"
-            onClick={() => router.push('/integrations')}
-          >
-            Connect API
-          </Button>
-        </MotionDiv>
-      )}
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Growth Score</p>
+        <p className="text-3xl font-semibold text-slate-900 tracking-tight tabular-nums">
+          {project?.health_score || 0}
+          <span className="text-sm opacity-40">/100</span>
+        </p>
+      </div>
 
-      {/* 🔥 "Today’s Focus" Banner - Refined */}
-      <MotionDiv 
-        initial={{ opacity: 0, y: -4 }} 
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-slate-900 rounded-2xl p-8 text-white shadow-xl shadow-slate-200 relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8"
-      >
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-white/10 via-transparent to-transparent opacity-40" />
-        <div className="relative z-10 flex items-center gap-6">
-          <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center border border-white/10">
-            <Sparkles className="w-5 h-5 text-brand-100" />
-          </div>
-          <div>
-            <h3 className="text-[10px] font-bold tracking-[0.2em] uppercase text-slate-400 mb-1">Critical Objective</h3>
-            <p className="text-xl font-semibold tracking-tight">
-              {tasks.length > 0 ? tasks[0].title : insights.length > 0 ? insights[0].title : "Analyze your latest metrics to find growth opportunities."}
-            </p>
-          </div>
-        </div>
-        <div className="relative z-10 flex items-center gap-8 md:border-l border-white/10 md:pl-8">
-          <div className="text-right">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Growth Score</p>
-            <p className="text-3xl font-semibold tracking-tight tabular-nums">{project?.health_score || 0}<span className="text-sm opacity-40">/100</span></p>
-          </div>
-          <Button 
-            className="rounded-xl bg-white text-slate-900 hover:bg-slate-50 font-semibold px-6 h-12 transition-all"
-            onClick={() => router.push('/action-center')}
-          >
-            Execute Strategy
-          </Button>
-        </div>
-      </MotionDiv>
+      <SectionTabs tabs={dashboardTabs} />
 
       {/* 📊 2. PERFORMANCE SNAPSHOT */}
       <GrowthSnapshot 
-        viewMode={viewMode} 
-        setViewMode={setViewMode} 
+        mode={mode}
         project={project} 
         snapshotData={snapshot}
       />
@@ -323,7 +272,6 @@ export default function DashboardPage() {
                       {doneCount}/{tasks.length} Complete
                     </Badge>
                   </div>
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Velocity: Increasing</span>
                 </div>
                 <div className="space-y-3">
                   <Progress value={progressPercent} className="h-1.5 bg-slate-100" indicatorClassName="bg-emerald-500" />

@@ -327,6 +327,10 @@ func registerAdminRoutes(g *gin.RouterGroup, database *gorm.DB,
 
 	admin.GET("/me", p(models.PermAdminAccess, h.AdminMe)...)
 	admin.GET("/roles", p(models.PermUsersRead, h.ListRoles)...)
+	admin.GET("/permissions", p(models.PermRolesRead, h.ListPermissions)...)
+	admin.POST("/roles", p(models.PermRolesWrite, h.CreateRole)...)
+	admin.PATCH("/roles/:id", p(models.PermRolesWrite, h.UpdateRole)...)
+	admin.DELETE("/roles/:id", p(models.PermRolesWrite, h.DeleteRole)...)
 	admin.GET("/users", p(models.PermUsersRead, h.ListUsers)...)
 	admin.GET("/users/export", p(models.PermUsersExport, h.ExportUsers)...)
 	admin.GET("/users/:id", p(models.PermUsersRead, h.GetUser)...)

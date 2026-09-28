@@ -221,6 +221,18 @@ Did not push. Did not start RBAC / suspend-blocks-login.
 
 Locked: `AllowStopImpersonation` is a **one-off**. Staff routes stay “admin/staff token + permission.” Impersonation JWTs never get staff permissions. Do not put Stop back inside the permission group.
 
+### Step 6 — Roles UI (2026-09-21)
+
+Status: done
+
+- [x] Catalog: `roles.read`, `roles.write` (developer-maintained; Stop still not a permission)
+- [x] `GET /admin/permissions` = `roles.read`; create/update/delete role = `roles.write`
+- [x] `GET /admin/roles` stays `users.read` (user dropdowns)
+- [x] Super Admin is system: view-only, cannot PATCH/DELETE, code stays `admin`
+- [x] Custom roles: create with immutable code, tick catalog perms (must include `admin.access`), delete only if unused
+- [x] `/admin/roles` page + sidebar. No UI to invent permission codes
+- [x] Did not push
+
 ### Step 5 — Super Admin + permission guard (2026-09-16)
 
 Status: done
@@ -243,7 +255,7 @@ Status: done
 Notes:
 - 2026-09-16: Cutover on live `dev.db`. Leftover `permissions.stats.read` row from Step 4 is **not** granted to Super Admin (orphan; catalog is 19). Did not DELETE.
 - Lockout: owner JWT `/admin/me` 403; impersonation JWT `/admin/me` 403; Stop 200; Super Admin login `/admin/me` 200 with 19 perms and `/admin/stats` `revenue_available=true`; suspend Super Admin 400 `CANNOT_SUSPEND_ADMIN`. Unit tests: last-SA demote blocked; two-SA demote allowed; stats not redacted when perms not loaded.
-- Did not push. Step 6 (Roles UI) not started.
+- Pushed 2026-09-21 as `f9e857f`. Step 6 (Roles UI) follows.
 
 ### Step 4 — permission catalog (schema + seed only)
 

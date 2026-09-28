@@ -1,14 +1,90 @@
-import axios from "axios";
-import { readCookie, COOKIE_TOKEN, COOKIE_IMPERSONATION_TOKEN, clearAuthCookie } from "./auth-cookie";
+import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
+import {
+  readCookie,
+  COOKIE_TOKEN,
+  COOKIE_IMPERSONATION_TOKEN,
+  setToken,
+  clearAuth,
+  clearImpersonation,
+} from "./auth-cookie";
+import { accessTokenExpiresAtMs } from "./access-token";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
 
+type RetryConfig = InternalAxiosRequestConfig & { _retry?: boolean };
+
+const jsonHeaders = { "Content-Type": "application/json" };
+
 const apiClient = axios.create({
   baseURL: API_BASE,
-  headers: {
-    "Content-Type": "application/json",
-  },
+  withCredentials: true,
+  headers: jsonHeaders,
 });
+
+// Login/register/refresh/logout: cookies required, but a 401 here must
+// NOT run the session interceptor (wrong password ≠ dead session).
+const authClient = axios.create({
+  baseURL: API_BASE,
+  withCredentials: true,
+  headers: jsonHeaders,
+});
+
+let refreshInFlight: Promise<string | null> | null = null;
+let keepAliveTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  const res = await authClient.post("/auth/refresh");
+  const token = (res.data as { data?: { token?: string } })?.data?.token;
+  if (typeof token !== "string" || !token) return null;
+  setToken(token);
+  return token;
+}
+
+function runRefresh(): Promise<string | null> {
+  if (!refreshInFlight) {
+    refreshInFlight = refreshAccessToken().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+export function stopSessionKeepAlive(): void {
+  if (keepAliveTimer) {
+    clearTimeout(keepAliveTimer);
+    keepAliveTimer = null;
+  }
+}
+
+export function startSessionKeepAlive(): void {
+  if (typeof window === "undefined") return;
+  stopSessionKeepAlive();
+  const token = readCookie(COOKIE_TOKEN);
+  if (!token) return;
+  const exp = accessTokenExpiresAtMs(token);
+  if (exp == null) return;
+  const fireIn = Math.max(exp - Date.now() - 60_000, 0);
+  keepAliveTimer = setTimeout(() => {
+    void runRefresh()
+      .then((next) => {
+        if (next) startSessionKeepAlive();
+      })
+      .catch(() => {
+        // Network blip — leave the access token; the 401 interceptor retries.
+      });
+  }, fireIn);
+}
+
+function forceLogout(): void {
+  stopSessionKeepAlive();
+  clearAuth();
+  clearImpersonation();
+  if (typeof window === "undefined") return;
+  const path = window.location.pathname;
+  if (path !== "/login" && path !== "/register") {
+    window.location.href = "/login";
+  }
+}
 
 // Request interceptor — attach JWT token to every request.
 //
@@ -18,13 +94,10 @@ const apiClient = axios.create({
 //      including Stop. POST /admin/users/:id/stop-impersonation is
 //      registered outside RequireRole("admin") so that JWT is accepted.
 //   2. dmtool_token cookie (phase 3 source of truth).
-//
-// The proxy at frontend/proxy.ts is configured to accept either
-// cookie as a valid auth shape for gated routes — see that file's
-// auth gate for the matching logic.
 apiClient.interceptors.request.use(
   (config) => {
     if (typeof document !== "undefined") {
+      if (!keepAliveTimer) startSessionKeepAlive();
       const impToken = readCookie(COOKIE_IMPERSONATION_TOKEN);
       if (impToken) {
         config.headers.Authorization = `Bearer ${impToken}`;
@@ -39,33 +112,59 @@ apiClient.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 );
-// Response interceptor — handle 401 (token expired) globally.
-// Clears the auth cookie instead of poking localStorage.
+
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      if (typeof window !== "undefined") {
-        clearAuthCookie(COOKIE_TOKEN);
-        const path = window.location.pathname;
-        if (path !== "/login" && path !== "/register") {
-          window.location.href = "/login";
-        }
-      }
+  async (error: AxiosError) => {
+    const original = error.config as RetryConfig | undefined;
+    if (error.response?.status !== 401 || !original) {
+      return Promise.reject(error);
     }
-    return Promise.reject(error);
+
+    // Impersonation JWT expired (or target disabled): drop the support
+    // session and retry as the admin. Do not wipe dmtool_token.
+    if (typeof document !== "undefined" && readCookie(COOKIE_IMPERSONATION_TOKEN) && !original._retry) {
+      clearImpersonation();
+      if (original.headers) {
+        delete (original.headers as Record<string, unknown>).Authorization;
+      }
+      return apiClient(original);
+    }
+
+    if (original._retry) {
+      forceLogout();
+      return Promise.reject(error);
+    }
+    original._retry = true;
+
+    try {
+      const token = await runRefresh();
+      if (!token) {
+        forceLogout();
+        return Promise.reject(error);
+      }
+      startSessionKeepAlive();
+      original.headers = original.headers ?? {};
+      original.headers.Authorization = `Bearer ${token}`;
+      return apiClient(original);
+    } catch (e) {
+      const status = axios.isAxiosError(e) ? e.response?.status : undefined;
+      if (status === 401) forceLogout();
+      return Promise.reject(error);
+    }
   }
 );
 
 // ── Auth API ──────────────────────────────────────────────────────────────────
 export const authApi = {
   register: (data: { name: string; email: string; password: string }) =>
-    axios.post(`${API_BASE}/auth/register`, data),
+    authClient.post("/auth/register", data),
   login: (data: { email: string; password: string }) =>
-    axios.post(`${API_BASE}/auth/login`, data),
+    authClient.post("/auth/login", data),
+  refresh: () => authClient.post("/auth/refresh"),
   me: () => apiClient.get("/auth/me"),
   updateMe: (data: { dashboard_mode: string }) => apiClient.patch("/auth/me", data),
-  logout: () => apiClient.post("/auth/logout"),
+  logout: () => authClient.post("/auth/logout"),
 };
 
 // ── Projects API ─────────────────────────────────────────────────────────────
@@ -316,12 +415,22 @@ export type AdminAuditEntry = {
   metadata: Record<string, unknown> | null;
 };
 
+export type AdminPermission = {
+  id: number;
+  code: string;
+  name: string;
+  description: string;
+  category: string;
+};
+
 export type AdminRole = {
   id: number;
   code: string;
   name: string;
   description: string;
   is_system: boolean;
+  permissions?: AdminPermission[];
+  user_count?: number;
 };
 
 export type AdminStats = {
@@ -461,6 +570,13 @@ export const adminApi = {
   me: () =>
     apiClient.get<{ data: { role: string; permissions: string[] } }>("/admin/me"),
   listRoles: () => apiClient.get<{ data: AdminRole[] }>("/admin/roles"),
+  listPermissions: () => apiClient.get<{ data: AdminPermission[] }>("/admin/permissions"),
+  createRole: (body: { code: string; name: string; description?: string; permissions: string[] }) =>
+    apiClient.post<{ data: AdminRole }>("/admin/roles", body),
+  updateRole: (id: number, body: { name: string; description?: string; permissions: string[] }) =>
+    apiClient.patch<{ data: AdminRole }>(`/admin/roles/${id}`, body),
+  deleteRole: (id: number) =>
+    apiClient.delete<{ data: { id: number; code: string } }>(`/admin/roles/${id}`),
   listUsers: (params: { page?: number; size?: number; search?: string; plan?: string; role?: string; mode?: string; status?: string } = {}) =>
     apiClient.get<{
       data: { users: AdminUserSummary[]; total: number; page: number; size: number };

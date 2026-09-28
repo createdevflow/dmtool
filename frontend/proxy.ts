@@ -1,15 +1,14 @@
 // proxy.ts — Next 16's proxy file (renamed from middleware). Runs on the
-// edge before any route renders. Two responsibilities in phase 3:
+// edge before any route renders. Responsibilities:
 //
 //   1. Auth gate — block requests to /(dashboard|admin)/* that don't
 //      carry a dmtool_token cookie. Unauthenticated requests redirect to
 //      /login with a return-URL so the user lands back where they tried
 //      to go.
 //
-//   2. Mode rewrite — /dashboard and /admin without a mode segment get
-//      rewritten to /dashboard/<mode> and /admin/<mode>. Mode is read
-//      from the dmtool_mode cookie, falling back to "combined" until
-//      phase 4 wires the server-side preference.
+//   (The former /dashboard → /dashboard/<mode> mode rewrite was removed
+//   when the richer dashboard page became the permanent /dashboard.
+//   Mode is read client-side via the DashboardMode context instead.)
 //
 // CSRF protection: state-changing requests (non-GET/HEAD) MUST come from
 // a trusted origin. The Origin header is mandatory per the Fetch spec for
@@ -28,11 +27,6 @@ import type { NextRequest } from "next/server";
 
 // Static lookup tables per project style (Record not Set for fixed membership).
 const PROTECTED_PREFIXES: string[] = ["/dashboard", "/admin"];
-const DASHBOARD_MODES: Record<string, true> = {
-  search: true,
-  social: true,
-  combined: true,
-};
 const SAFE_METHODS: Record<string, true> = {
   GET: true,
   HEAD: true,
@@ -97,7 +91,7 @@ export function proxy(request: NextRequest) {
     }
   }
 
-  // ----- Auth gate (MUST run before mode rewrite) -----------------
+  // ----- Auth gate ----------------------------------------------------
   // The gate is satisfied if EITHER the admin's own session token
   // (dmtool_token) OR an active impersonation token
   // (dmtool_impersonation_token) is present and JWT-shaped. The
@@ -121,20 +115,6 @@ export function proxy(request: NextRequest) {
       loginUrl.searchParams.set("return_to", pathname + (search || ""));
     }
     return NextResponse.redirect(loginUrl);
-  }
-
-  // ----- Mode rewrite (only runs after auth gate passes) ----------
-  // Dashboard gets mode-based rewrite; admin does NOT (it has its own
-  // mode switcher inside the admin sidebar).
-  if (pathname === "/dashboard" || pathname === "/dashboard/") {
-    const cookieMode = request.cookies.get("dmtool_mode")?.value;
-    const mode =
-      cookieMode !== undefined && DASHBOARD_MODES[cookieMode] === true
-        ? cookieMode
-        : "combined";
-    const url = request.nextUrl.clone();
-    url.pathname = `/dashboard/${mode}`;
-    return NextResponse.rewrite(url);
   }
 
   return NextResponse.next();

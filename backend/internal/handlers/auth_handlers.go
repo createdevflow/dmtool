@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"log"
+	"net/http"
 	"time"
 
 	"backend/internal/config"
@@ -199,8 +200,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		}
 	}
 
-	// Clear cookie
-	c.SetCookie("refresh_token", "", -1, "/", "", h.cfg.AppEnv == "production", true)
+	h.setRefreshCookie(c, "", -1)
 	utils.NoContent(c)
 }
 
@@ -294,11 +294,30 @@ func (h *AuthHandler) issueTokens(c *gin.Context, user *models.User) {
 		return
 	}
 
-	// Set HttpOnly Cookie
-	c.SetCookie("refresh_token", refreshToken, int(7*24*3600), "/", "", h.cfg.AppEnv == "production", true)
+	h.setRefreshCookie(c, refreshToken, int(7*24*3600))
 
 	utils.Success(c, gin.H{
 		"token": accessToken,
 		"user":  user,
 	}, nil)
+}
+
+// setRefreshCookie writes the HttpOnly refresh cookie. Production is
+// cross-site (Vercel frontend, Render API), so SameSite=None; Secure.
+// Localhost is same-site different-origin; Lax + non-Secure works on http.
+func (h *AuthHandler) setRefreshCookie(c *gin.Context, value string, maxAge int) {
+	secure := h.cfg != nil && h.cfg.AppEnv == "production"
+	sameSite := http.SameSiteLaxMode
+	if secure {
+		sameSite = http.SameSiteNoneMode
+	}
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    value,
+		MaxAge:   maxAge,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: sameSite,
+	})
 }

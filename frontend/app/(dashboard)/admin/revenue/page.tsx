@@ -37,8 +37,9 @@ export default function AdminRevenuePage() {
     cents === 0 ? "$0" : `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0 })}`;
 
   // Compute monthly vs yearly revenue breakdown
-  const proMonthlyCount = stats.plan_breakdown["pro_monthly"] || 0;
-  const proYearlyCount = stats.plan_breakdown["pro_yearly"] || 0;
+  const planBreakdown = stats.plan_breakdown ?? {};
+  const proMonthlyCount = planBreakdown["pro_monthly"] || 0;
+  const proYearlyCount = planBreakdown["pro_yearly"] || 0;
   const monthlyRevenueCents = proMonthlyCount * 2900;
   const yearlyRevenueCents = proYearlyCount * 29000;
   const monthlyContribution = monthlyRevenueCents;
@@ -176,7 +177,7 @@ export default function AdminRevenuePage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {Object.entries(stats.plan_breakdown)
+              {Object.entries(planBreakdown)
                 .sort(([, a], [, b]) => b - a)
                 .map(([code, count]) => {
                   const pct = stats.total_users === 0 ? 0 : (count / stats.total_users) * 100;

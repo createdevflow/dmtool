@@ -60,6 +60,7 @@ const adminNavGroups: AdminNavGroup[] = [
     items: [
       { name: "Platform Overview", href: "/admin", icon: LayoutDashboard },
       { name: "User Management", href: "/admin/users", icon: Users },
+      { name: "Roles", href: "/admin/roles", icon: Shield },
       { name: "All Projects", href: "/admin/projects", icon: Globe },
     ],
   },

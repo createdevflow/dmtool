@@ -30,7 +30,7 @@ interface ProjectSummary {
 // overview cards. The same `href` is reused in the per-card Open
 // link at the bottom of each card.
 const SEARCH_TABS: SectionTab[] = [
-  { label: "Overview", href: "/dashboard" },
+  { label: "Overview", href: "/dashboard", match: (p) => p === "/dashboard" },
   { label: "Site Explorer", href: "/seo/site-explorer" },
   { label: "Keyword Research", href: "/seo/keywords" },
   { label: "Rank Tracking", href: "/seo/rank-tracking" },
@@ -39,7 +39,7 @@ const SEARCH_TABS: SectionTab[] = [
 ];
 
 const SOCIAL_TABS: SectionTab[] = [
-  { label: "Overview", href: "/dashboard" },
+  { label: "Overview", href: "/dashboard", match: (p) => p === "/dashboard" },
   { label: "Profile Analyzer", href: "/social/profile-analyzer" },
   { label: "Content Analytics", href: "/social/insights" },
   { label: "Growth Tracking", href: "/social/growth" },
@@ -48,7 +48,7 @@ const SOCIAL_TABS: SectionTab[] = [
 ];
 
 const COMBINED_TABS: SectionTab[] = [
-  { label: "Overview", href: "/dashboard" },
+  { label: "Overview", href: "/dashboard", match: (p) => p === "/dashboard" },
   { label: "Site Explorer", href: "/seo/site-explorer" },
   { label: "Keyword Research", href: "/seo/keywords" },
   { label: "Rank Tracking", href: "/seo/rank-tracking" },

@@ -1072,7 +1072,11 @@ type adminUserGrowthPoint struct {
 }
 
 func (h *AdminHandler) Stats(c *gin.Context) {
-	out := adminStatsResponse{PlanBreakdown: map[string]int64{}}
+	out := adminStatsResponse{
+		PlanBreakdown:  map[string]int64{},
+		UserGrowth30d:  []adminUserGrowthPoint{},
+		RecentActivity: []models.AdminAuditLog{},
+	}
 
 	h.db.Model(&models.User{}).Count(&out.TotalUsers)
 	sevenAgo := time.Now().AddDate(0, 0, -7)
@@ -1148,11 +1152,13 @@ func (h *AdminHandler) Stats(c *gin.Context) {
 		Day   string
 		Count int64
 	}
+	// DATE() is valid on both PostgreSQL (prod) and SQLite (dev).
+	// strftime() is SQLite-only and made user_growth_30d null in prod.
 	h.db.Raw(`
-		SELECT strftime('%Y-%m-%d', created_at) as day, count(*) as count
+		SELECT DATE(created_at) as day, count(*) as count
 		FROM users
 		WHERE created_at >= ?
-		GROUP BY day
+		GROUP BY DATE(created_at)
 		ORDER BY day ASC
 	`, thirtyAgo).Scan(&growthRows)
 	for _, r := range growthRows {
@@ -1563,16 +1569,6 @@ func (h *AdminHandler) AdminMe(c *gin.Context) {
 		"role":        roleCode,
 		"permissions": perms,
 	}, nil)
-}
-
-// ListRoles returns staff roles (not customer owner/viewer).
-func (h *AdminHandler) ListRoles(c *gin.Context) {
-	var roles []models.Role
-	if err := h.db.Order("is_system DESC, code ASC").Find(&roles).Error; err != nil {
-		utils.InternalError(c, "Failed to list roles")
-		return
-	}
-	utils.Success(c, roles, nil)
 }
 
 func (h *AdminHandler) isSystemRole(code string) bool {

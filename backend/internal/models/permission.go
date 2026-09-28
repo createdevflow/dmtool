@@ -37,6 +37,8 @@ const (
 	PermPlatformHealthRead  = "platform.health.read"
 	PermIntegrationsRead    = "integrations.read"
 	PermAuditRead           = "audit.read"
+	PermRolesRead           = "roles.read"
+	PermRolesWrite          = "roles.write"
 )
 
 // PermissionCatalog is the single list SeedPermissions inserts.
@@ -62,5 +64,7 @@ func PermissionCatalog() []Permission {
 		{Code: PermPlatformHealthRead, Name: "View system health", Description: "API/DB/OAuth health snapshot.", Category: "platform"},
 		{Code: PermIntegrationsRead, Name: "View integrations", Description: "OAuth connection counts by provider.", Category: "platform"},
 		{Code: PermAuditRead, Name: "View audit log", Description: "Read admin audit entries.", Category: "audit"},
+		{Code: PermRolesRead, Name: "View roles", Description: "Open the Roles page and see permission assignments. User dropdowns still use users.read.", Category: "users"},
+		{Code: PermRolesWrite, Name: "Edit roles", Description: "Create, update, and delete custom staff roles. Super Admin cannot be edited.", Category: "users"},
 	}
 }

@@ -42,6 +42,11 @@ export default function AdminOverviewPage() {
 
   const revenueAvailable = stats.revenue_available !== false;
   const mrrIsStub = revenueAvailable && stats.mrr_cents === 0 && stats.active_subs > 0;
+  const featureAdoption = stats.feature_adoption ?? {};
+  const healthBreakdown = stats.health_breakdown ?? {};
+  const planBreakdown = stats.plan_breakdown ?? {};
+  const userGrowth = stats.user_growth_30d ?? [];
+  const recentActivity = stats.recent_activity ?? [];
 
   const healthColor = (h: string) => {
     switch (h) {
@@ -139,11 +144,11 @@ export default function AdminOverviewPage() {
             <CardDescription>Platform-wide feature usage rates.</CardDescription>
           </CardHeader>
           <CardContent>
-            {Object.keys(stats.feature_adoption).length === 0 ? (
+            {Object.keys(featureAdoption).length === 0 ? (
               <div className="text-sm text-slate-500">No data yet.</div>
             ) : (
               <div className="space-y-3">
-                {Object.entries(stats.feature_adoption)
+                {Object.entries(featureAdoption)
                   .sort(([, a], [, b]) => b - a)
                   .map(([key, pct]) => {
                     const Icon = featureIcons[key] || Globe;
@@ -177,11 +182,11 @@ export default function AdminOverviewPage() {
             <CardDescription>Distribution of project health statuses.</CardDescription>
           </CardHeader>
           <CardContent>
-            {Object.keys(stats.health_breakdown).length === 0 ? (
+            {Object.keys(healthBreakdown).length === 0 ? (
               <div className="text-sm text-slate-500">No projects yet.</div>
             ) : (
               <div className="space-y-3">
-                {Object.entries(stats.health_breakdown)
+                {Object.entries(healthBreakdown)
                   .sort(([, a], [, b]) => b - a)
                   .map(([health, count]) => {
                     const pct = stats.total_projects === 0 ? 0 : (count / stats.total_projects) * 100;
@@ -213,10 +218,10 @@ export default function AdminOverviewPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            {Object.keys(stats.plan_breakdown).length === 0 && (
+            {Object.keys(planBreakdown).length === 0 && (
               <div className="text-sm text-slate-500">No data yet.</div>
             )}
-            {Object.entries(stats.plan_breakdown)
+            {Object.entries(planBreakdown)
               .sort(([, a], [, b]) => b - a)
               .map(([code, count]) => {
                 const pct = stats.total_users === 0 ? 0 : (count / stats.total_users) * 100;
@@ -245,12 +250,12 @@ export default function AdminOverviewPage() {
             <CardDescription>New signups per day, last 30 days.</CardDescription>
           </CardHeader>
           <CardContent>
-            {stats.user_growth_30d.length === 0 ? (
+            {userGrowth.length === 0 ? (
               <div className="text-sm text-slate-500">No signups in the last 30 days.</div>
             ) : (
               <div className="flex items-end gap-1 h-32">
-                {stats.user_growth_30d.map((g) => {
-                  const max = Math.max(...stats.user_growth_30d.map((x) => x.count), 1);
+                {userGrowth.map((g) => {
+                  const max = Math.max(...userGrowth.map((x) => x.count), 1);
                   return (
                     <div
                       key={g.date}
@@ -272,11 +277,11 @@ export default function AdminOverviewPage() {
             <CardDescription>Last 20 admin actions.</CardDescription>
           </CardHeader>
           <CardContent>
-            {stats.recent_activity.length === 0 ? (
+            {recentActivity.length === 0 ? (
               <div className="text-sm text-slate-500">No admin actions yet.</div>
             ) : (
               <ul className="space-y-2 max-h-80 overflow-auto">
-                {stats.recent_activity.map((a) => (
+                {recentActivity.map((a) => (
                   <li key={a.id} className="text-xs flex items-start gap-2">
                     <Badge variant="outline" className="text-[10px]">{a.action}</Badge>
                     <span className="text-slate-500 flex-1">

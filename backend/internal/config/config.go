@@ -30,12 +30,13 @@ type Config struct {
 	OpenAIAPIKey string
 
 	// Integrations
-	MetaAppID          string
-	MetaAppSecret      string
-	MetaPageAccessToken string
-	GoogleClientID     string
-	GoogleClientSecret string
-	LinkedinClientID   string
+	MetaAppID            string
+	MetaAppSecret        string
+	MetaPageAccessToken  string
+	GoogleClientID       string
+	GoogleClientSecret   string
+	PageSpeedAPIKey      string // optional; PageSpeed Insights / CrUX
+	LinkedinClientID     string
 	LinkedinClientSecret string
 	LinkedinScopes       string
 
@@ -85,14 +86,15 @@ func Load() *Config {
 
 		OpenAIAPIKey: viper.GetString("OPENAI_API_KEY"),
 
-		MetaAppID:          viper.GetString("META_APP_ID"),
-		MetaAppSecret:      viper.GetString("META_APP_SECRET"),
-		MetaPageAccessToken: viper.GetString("META_PAGE_ACCESS_TOKEN"),
-		GoogleClientID:     viper.GetString("GOOGLE_CLIENT_ID"),
-		GoogleClientSecret: viper.GetString("GOOGLE_CLIENT_SECRET"),
-		LinkedinClientID:   viper.GetString("LINKEDIN_CLIENT_ID"),
+		MetaAppID:            viper.GetString("META_APP_ID"),
+		MetaAppSecret:        viper.GetString("META_APP_SECRET"),
+		MetaPageAccessToken:  viper.GetString("META_PAGE_ACCESS_TOKEN"),
+		GoogleClientID:       viper.GetString("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret:   viper.GetString("GOOGLE_CLIENT_SECRET"),
+		PageSpeedAPIKey:      viper.GetString("PAGESPEED_API_KEY"),
+		LinkedinClientID:     viper.GetString("LINKEDIN_CLIENT_ID"),
 		LinkedinClientSecret: viper.GetString("LINKEDIN_CLIENT_SECRET"),
-		LinkedinScopes:     viper.GetString("LINKEDIN_SCOPES"),
+		LinkedinScopes:       viper.GetString("LINKEDIN_SCOPES"),
 
 		AppEnv:  viper.GetString("APP_ENV"),
 		Version: viper.GetString("VERSION"),

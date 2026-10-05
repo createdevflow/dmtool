@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Search, ShieldCheck, AlertCircle,
   Zap, Loader2, CheckCircle2, RefreshCw,
-  ExternalLink, Clock, AlertTriangle, Info,
+  ExternalLink, Clock, AlertTriangle, Info, FileText, Lock, Gauge,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { dashboardApi } from "@/lib/api-client";
@@ -24,6 +24,103 @@ const statusConfig: Record<string, { dot: string; label: string }> = {
   warning: { dot: "bg-amber-400",  label: "Warning" },
   fail:    { dot: "bg-rose-500",   label: "Fail" },
 };
+
+function httpsStatusLabel(https: any): string {
+  if (https?.label) return https.label;
+  if (https?.status === "pass") return "Pass";
+  if (https?.status === "fail") return "Fail";
+  if (https?.status === "warning") return "Warning";
+  return "";
+}
+
+function httpsHeadline(https: any): string {
+  const status = httpsStatusLabel(https);
+  if (typeof https?.score === "number") {
+    return status ? `${status} · ${https.score}/100` : `${https.score}/100`;
+  }
+  return status || "Not checked";
+}
+
+function httpsSummary(https: any): string {
+  const parts: string[] = [];
+  if (https?.serves_https === true) {
+    parts.push("This page is served over HTTPS.");
+    if (https.tls_valid) {
+      const cert = ["Certificate valid"];
+      if (https.cert_issuer) cert.push(https.cert_issuer);
+      if (https.cert_expiry) cert.push(`expires ${https.cert_expiry}`);
+      parts.push(cert.join(" · "));
+    } else if (https.tls_error) {
+      parts.push(`Certificate check failed: ${https.tls_error}`);
+    }
+    if (https.redirects_http) {
+      parts.push("HTTP redirects to HTTPS.");
+    } else if (https.redirect_note) {
+      parts.push(https.redirect_note);
+    }
+    if (https.mixed_active?.length) {
+      parts.push(`Active mixed content on this page: ${https.mixed_active.join(", ")}`);
+    } else if (https.mixed_passive?.length) {
+      parts.push(`Passive mixed content on this page: ${https.mixed_passive.join(", ")}`);
+    } else if (https.serves_https) {
+      parts.push("No http:// resources found on this page.");
+    }
+    if (https.hsts) {
+      parts.push("HSTS header present.");
+    }
+  } else if (https?.serves_https === false) {
+    parts.push("This page is served over HTTP.");
+    if (https.redirect_note) parts.push(https.redirect_note);
+  } else {
+    parts.push("HTTPS details from the last technical audit. Re-run the audit for certificate, redirect, and mixed-content findings.");
+  }
+  parts.push("Checked on this page only — not a sitewide HTTP inventory.");
+  return parts.join(" ");
+}
+
+function cwvHeadline(cwv: any): string {
+  if (cwv?.overall_label) return cwv.overall_label;
+  if (cwv?.label) return cwv.label;
+  if (cwv?.status === "pass") return "Good";
+  if (cwv?.status === "fail") return "Poor";
+  if (cwv?.status === "warning") return "Needs work";
+  return "Not checked";
+}
+
+function cwvMetricLine(m: any): string {
+  if (!m) return "";
+  const bits = [m.name || "", m.display || ""].filter(Boolean);
+  if (m.rating === "good") bits.push("good");
+  else if (m.rating === "needs_improvement") bits.push("needs improvement");
+  else if (m.rating === "poor") bits.push("poor");
+  return bits.join(" ");
+}
+
+function cwvSummary(cwv: any): string {
+  const parts: string[] = [];
+  if (cwv?.field_available) {
+    const metrics = [cwvMetricLine(cwv.lcp), cwvMetricLine(cwv.inp), cwvMetricLine(cwv.cls)].filter(Boolean);
+    if (metrics.length) parts.push(metrics.join(" · "));
+    if (cwv.field_scope === "origin") {
+      parts.push("Chrome UX Report is origin-level (not enough data for this specific URL).");
+    } else {
+      parts.push("Chrome UX Report field data for this URL (mobile, ~28 days).");
+    }
+  } else if (typeof cwv?.lab_performance === "number") {
+    parts.push(`Not enough CrUX field data to score Core Web Vitals. Lighthouse lab performance ${cwv.lab_performance}/100 is not CWV.`);
+    if (cwv.lab_lcp) parts.push(`Lab LCP ${cwv.lab_lcp}.`);
+    if (cwv.lab_cls) parts.push(`Lab CLS ${cwv.lab_cls}.`);
+  } else if (cwv?.error) {
+    parts.push(`PageSpeed Insights unavailable: ${cwv.error}`);
+  } else {
+    parts.push("Core Web Vitals from the last technical audit. Re-run the audit for LCP, INP, and CLS from Chrome UX Report.");
+  }
+  if (cwv?.field_available && typeof cwv.lab_performance === "number") {
+    parts.push(`Lighthouse lab ${cwv.lab_performance}/100 (simulated, not CWV).`);
+  }
+  parts.push("Mobile PageSpeed Insights for this URL only.");
+  return parts.join(" ");
+}
 
 export default function SiteExplorerPage() {
   const [project, setProject] = useState<any>(null);
@@ -50,7 +147,14 @@ export default function SiteExplorerPage() {
             const aRes = await dashboardApi.getSeoAudit(p.id);
             const status = aRes.data?.data ?? aRes.data;
             if (status?.score != null) {
-              setAuditResult({ score: status.score, health: status.health });
+              setAuditResult({
+                score: status.score,
+                health: status.health,
+                crawled_at: status.last_updated,
+                robots: status.robots,
+                https: status.https,
+                cwv: status.cwv,
+              });
             }
           } catch {}
         }
@@ -153,11 +257,16 @@ export default function SiteExplorerPage() {
           <Badge variant="outline" className={`bg-${healthColor}-50 text-${healthColor}-600 border-0 font-bold px-3 py-1`}>
             {healthLabel}
           </Badge>
-          {auditResult?.load_time_ms && (
+          {auditResult?.load_time_ms ? (
             <p className="text-xs text-slate-400 mt-3 flex items-center gap-1">
               <Clock className="w-3.5 h-3.5" /> {auditResult.load_time_ms}ms load time
             </p>
-          )}
+          ) : null}
+          {auditResult?.crawled_at ? (
+            <p className="text-xs text-slate-400 mt-1">
+              Last checked {new Date(auditResult.crawled_at).toLocaleString()}
+            </p>
+          ) : null}
         </Card>
 
         <div className="lg:col-span-2 grid grid-cols-2 gap-5">
@@ -179,6 +288,92 @@ export default function SiteExplorerPage() {
           ))}
         </div>
       </div>
+
+      {(auditResult?.robots || auditResult?.https || auditResult?.cwv) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+          {auditResult?.robots && (
+            <Card className="border-slate-100 rounded-2xl p-6 bg-white">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">robots.txt</p>
+                  <p className="text-xl font-semibold text-slate-900 mt-0.5">
+                    {auditResult.robots.label
+                      ?? (auditResult.robots.status === "pass" ? "Pass"
+                        : auditResult.robots.status === "fail" ? "Fail"
+                        : auditResult.robots.status === "warning" ? "Warning"
+                        : auditResult.robots.available ? "Found" : "Not found")}
+                  </p>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {auditResult.robots.blocks_all
+                      ? "Disallow: / blocks the entire site."
+                      : auditResult.robots.blocked_important?.length
+                        ? `Blocked: ${auditResult.robots.blocked_important.join(", ")}`
+                        : auditResult.robots.sitemap_declared
+                          ? `Sitemap declared: ${(auditResult.robots.sitemaps || []).join(", ") || "yes"}`
+                          : auditResult.robots.available === false
+                            ? "File missing or not readable. Search engines treat a 404 as allow-all."
+                            : "Parsed on the last technical audit."}
+                  </p>
+                  {(auditResult.robots.checked_at || auditResult.crawled_at) && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Last checked {new Date(auditResult.robots.checked_at || auditResult.crawled_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+          {auditResult?.https && (
+            <Card className="border-slate-100 rounded-2xl p-6 bg-white">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">HTTPS</p>
+                  <p className="text-xl font-semibold text-slate-900 mt-0.5">
+                    {httpsHeadline(auditResult.https)}
+                  </p>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {httpsSummary(auditResult.https)}
+                  </p>
+                  {(auditResult.https.checked_at || auditResult.crawled_at) && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Last checked {new Date(auditResult.https.checked_at || auditResult.crawled_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+          {auditResult?.cwv && (
+            <Card className="border-slate-100 rounded-2xl p-6 bg-white">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+                  <Gauge className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Core Web Vitals</p>
+                  <p className="text-xl font-semibold text-slate-900 mt-0.5">
+                    {cwvHeadline(auditResult.cwv)}
+                  </p>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {cwvSummary(auditResult.cwv)}
+                  </p>
+                  {(auditResult.cwv.checked_at || auditResult.crawled_at) && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Last checked {new Date(auditResult.cwv.checked_at || auditResult.crawled_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* Tabs: Checks | Issues */}
       {(checks.length > 0 || issues.length > 0) && (
@@ -233,7 +428,12 @@ export default function SiteExplorerPage() {
                                 }`}>{s.label}</span>
                               </span>
                             </td>
-                            <td className="px-6 py-4 text-xs text-slate-500 max-w-xs">{check.detail}</td>
+                            <td className="px-6 py-4 text-xs text-slate-500 max-w-md">
+                              <p>{check.detail}</p>
+                              {check.recommendation ? (
+                                <p className="text-slate-400 mt-1">{check.recommendation}</p>
+                              ) : null}
+                            </td>
                           </motion.tr>
                         );
                       })}
@@ -301,7 +501,7 @@ export default function SiteExplorerPage() {
           </div>
           <p className="text-slate-900 font-semibold text-lg">No audit data yet</p>
           <p className="text-slate-400 text-sm mt-2 max-w-sm">
-            Click "Run Technical Audit" to crawl your site and get a real SEO health report with 13 checks.
+            Click "Run Technical Audit" to crawl this page and get a real SEO health report.
           </p>
         </div>
       )}

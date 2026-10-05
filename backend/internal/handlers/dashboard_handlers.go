@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"fmt"
-	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -95,12 +95,13 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 	}
 	ctrDelta := ctr - prevCTR
 
-	// 4. Fetch SEO issues for health context
+	// 4. Fetch SEO issues + GSC keyword positions
 	issues, _ := h.seoRepo.FindOpenIssues(pid, "")
 	keywords, _, _ := h.seoRepo.FindKeywords(pid, "")
-	kwCount := len(keywords)
+	ranked, top3, page1 := keywordPositionBuckets(keywords)
+	openIssueCount := len(issues)
+	hasGSC := trafficSource != ""
 
-	// 5. Website stats — all derived from real data
 	websiteStats := []gin.H{
 		{
 			"label":  "SEO Health",
@@ -130,22 +131,25 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 			"trend":  trendDir(ctrDelta),
 			"icon":   "MousePointer2",
 		},
+		rankedKeywordStat("Ranked Keywords", ranked, hasGSC),
+		rankedKeywordStat("Top 3 Keywords", top3, hasGSC),
+		rankedKeywordStat("Page 1 Keywords", page1, hasGSC),
+		{
+			"label":  "Open SEO Issues",
+			"value":  strconv.Itoa(openIssueCount),
+			"change": issueLabel(openIssueCount),
+			"trend":  issueTrend(openIssueCount),
+			"icon":   "AlertCircle",
+		},
+		robotsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		httpsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		cwvOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 	}
 
-	// 6. Ranked keywords stat (only show if audit was run)
-	if kwCount > 0 || project.HealthScore > 0 {
-		websiteStats[0] = gin.H{
-			"label":  "SEO Health",
-			"value":  strconv.Itoa(project.HealthScore) + "%",
-			"change": healthStatus(project.HealthScore),
-			"trend":  healthTrend(project.HealthScore),
-			"icon":   "Target",
-		}
-	}
-
-	// 7. Social metrics from DB
+	// 5. Social metrics from DB (live rows only)
 	socialMetrics, _ := h.metricRepo.FindLatestSocialMetrics(pid)
-	var latestFollowers, totalReach int64
+	socialHistory, _ := h.metricRepo.FindSocialMetricsByProject(pid, 30)
+	var latestFollowers, totalReach, profileVisits, postsCount int64
 	var totalEngRate float64
 	liveSocial := 0
 
@@ -155,70 +159,65 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		}
 		liveSocial++
 		latestFollowers += sm.Followers
-		totalReach += sm.Reach
+		if sm.MonthlyReach > 0 {
+			totalReach += sm.MonthlyReach
+		} else {
+			totalReach += sm.Reach
+		}
 		totalEngRate += sm.Engagement
+		profileVisits += sm.ProfileVisits
+		postsCount += sm.PostsCount
 	}
 	var avgEngRate float64
 	if liveSocial > 0 {
 		avgEngRate = totalEngRate / float64(liveSocial)
 	}
-
-	// Content score = engagement rate mapped to 0-10 scale (industry avg ~3.5%)
-	contentScore := math.Min(10.0, avgEngRate/3.5*8.0)
-	if contentScore == 0 && liveSocial > 0 {
-		contentScore = 5.0 // default if we have social data but 0 engagement
-	}
+	followerGain, hasGain := socialFollowerDelta(socialHistory)
 
 	socialStats := []gin.H{
+		socialCountStat("Total Followers", latestFollowers, liveSocial, "Latest sync", "Users"),
+		followerGainStat(followerGain, hasGain, liveSocial),
+		socialCountStat("Audience Reach", totalReach, liveSocial, "30d", "Zap"),
 		{
 			"label":  "Engagement Rate",
-			"value":  fmt.Sprintf("%.1f%%", avgEngRate),
+			"value":  socialRateValue(avgEngRate, liveSocial),
+			"change": engRateLabel(avgEngRate),
+			"trend":  engRateTrend(avgEngRate),
+			"icon":   "Activity",
+		},
+		socialCountStat("Profile Visits", profileVisits, liveSocial, "Latest sync", "Eye"),
+		socialCountStat("Published Posts", postsCount, liveSocial, "Latest sync", "FileText"),
+	}
+
+	combinedStats := []gin.H{
+		{
+			"label":  "Organic Traffic",
+			"value":  utils.FormatNumber(currClicks),
+			"change": fmtChange(clickChange),
+			"trend":  trendDir(clickChange),
+			"icon":   "Globe",
+		},
+		{
+			"label":  "Search Impressions",
+			"value":  utils.FormatNumber(currImpressions),
+			"change": fmtChange(impressionChange),
+			"trend":  trendDir(impressionChange),
+			"icon":   "TrendingUp",
+		},
+		socialCountStat("Total Followers", latestFollowers, liveSocial, "Latest sync", "Users"),
+		{
+			"label":  "Engagement Rate",
+			"value":  socialRateValue(avgEngRate, liveSocial),
 			"change": engRateLabel(avgEngRate),
 			"trend":  engRateTrend(avgEngRate),
 			"icon":   "Activity",
 		},
 		{
-			"label":  "Total Followers",
-			"value":  utils.FormatNumber(latestFollowers),
-			"change": "Live",
-			"trend":  "up",
-			"icon":   "Users",
-		},
-		{
-			"label":  "Audience Reach",
-			"value":  utils.FormatNumber(totalReach),
-			"change": "30d total",
-			"trend":  "up",
-			"icon":   "Zap",
-		},
-		{
-			"label":  "Content Score",
-			"value":  fmt.Sprintf("%.1f", contentScore),
-			"change": contentScoreLabel(contentScore),
-			"trend":  contentScoreTrend(contentScore),
-			"icon":   "BarChart3",
-		},
-	}
-
-	// 8. Combined / aggregate stats — computed from real data
-	growthIndex := computeGrowthIndex(clickChange, avgEngRate, project.HealthScore)
-	aggregateReach := currClicks + totalReach
-	openIssueCount := len(issues)
-
-	combinedStats := []gin.H{
-		{
-			"label":  "Growth Index",
-			"value":  strconv.Itoa(growthIndex),
-			"change": growthIndexLabel(growthIndex),
-			"trend":  trendDir(float64(growthIndex) - 50),
-			"icon":   "TrendingUp",
-		},
-		{
-			"label":  "Aggregate Reach",
-			"value":  utils.FormatNumber(aggregateReach),
-			"change": fmtChange(clickChange),
-			"trend":  trendDir(clickChange),
-			"icon":   "Zap",
+			"label":  "SEO Health",
+			"value":  strconv.Itoa(project.HealthScore) + "%",
+			"change": healthStatus(project.HealthScore),
+			"trend":  healthTrend(project.HealthScore),
+			"icon":   "Target",
 		},
 		{
 			"label":  "Open SEO Issues",
@@ -227,13 +226,11 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 			"trend":  issueTrend(openIssueCount),
 			"icon":   "AlertCircle",
 		},
-		{
-			"label":  "Ranked Keywords",
-			"value":  strconv.Itoa(kwCount),
-			"change": kwLabel(kwCount),
-			"trend":  "up",
-			"icon":   "Search",
-		},
+		rankedKeywordStat("Ranked Keywords", ranked, hasGSC),
+		rankedKeywordStat("Top 3 Keywords", top3, hasGSC),
+		robotsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		httpsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		cwvOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 	}
 
 	utils.Success(c, gin.H{
@@ -370,7 +367,7 @@ func (h *DashboardHandler) Traffic(c *gin.Context) {
 	prevMetrics = gscOnly(prevMetrics)
 
 	var currClicks, prevClicks, currImpressions, prevImpressions int64
-	
+
 	for _, m := range metrics {
 		currClicks += m.Clicks
 		currImpressions += m.Impressions
@@ -392,20 +389,19 @@ func (h *DashboardHandler) Traffic(c *gin.Context) {
 		prevCTR = float64(prevClicks) / float64(prevImpressions) * 100
 	}
 	ctrDelta := ctr - prevCTR
-	
+
 	utils.Success(c, gin.H{
 		"metrics": metrics,
 		"summary": gin.H{
-			"clicks":           currClicks,
-			"clicks_change":    clickChange,
-			"impressions":      currImpressions,
+			"clicks":             currClicks,
+			"clicks_change":      clickChange,
+			"impressions":        currImpressions,
 			"impressions_change": impressionChange,
-			"ctr":              ctr,
-			"ctr_change":       ctrDelta,
+			"ctr":                ctr,
+			"ctr_change":         ctrDelta,
 		},
 	}, nil)
 }
-
 
 // Competitors returns an empty list — competitor tracking requires user setup.
 // No hardcoded fake data is returned.
@@ -497,59 +493,6 @@ func engRateTrend(rate float64) string {
 	return "down"
 }
 
-func contentScoreLabel(score float64) string {
-	switch {
-	case score >= 8:
-		return "Excellent"
-	case score >= 6:
-		return "Good"
-	case score >= 4:
-		return "Average"
-	case score == 0:
-		return "No data"
-	default:
-		return "Needs work"
-	}
-}
-
-func contentScoreTrend(score float64) string {
-	if score >= 5 {
-		return "up"
-	}
-	return "down"
-}
-
-// computeGrowthIndex returns a 0-100 composite score from real signals.
-func computeGrowthIndex(clickGrowth float64, engRate float64, healthScore int) int {
-	// Weighted: 40% traffic growth, 30% engagement, 30% SEO health
-	trafficScore := 50.0 + math.Min(50, math.Max(-50, clickGrowth/2))
-	engScore := math.Min(100, engRate/5*100)
-	healthF := float64(healthScore)
-
-	composite := (trafficScore * 0.4) + (engScore * 0.3) + (healthF * 0.3)
-	result := int(math.Round(composite))
-	if result < 0 {
-		result = 0
-	}
-	if result > 100 {
-		result = 100
-	}
-	return result
-}
-
-func growthIndexLabel(idx int) string {
-	switch {
-	case idx >= 80:
-		return "Excellent"
-	case idx >= 60:
-		return "Good"
-	case idx >= 40:
-		return "Average"
-	default:
-		return "Low"
-	}
-}
-
 func issueLabel(count int) string {
 	if count == 0 {
 		return "All clear"
@@ -564,16 +507,172 @@ func issueTrend(count int) string {
 	return "down"
 }
 
-func kwLabel(count int) string {
-	if count == 0 {
-		return "Run audit"
+func dashStat(label, change, icon string) gin.H {
+	return gin.H{
+		"label":  label,
+		"value":  "—",
+		"change": change,
+		"trend":  "flat",
+		"icon":   icon,
 	}
-	return fmt.Sprintf("%d tracked", count)
 }
 
-func fmtPlus(n float64) string {
-	if n >= 0 {
-		return fmt.Sprintf("+%.1f%%", n)
+func robotsOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryOverviewStat(robotsStatusFromIssues(issues, healthScore, updated), "robots.txt", "FileText")
+}
+
+func httpsOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryOverviewStat(httpsStatusFromIssues(issues, healthScore, updated), "HTTPS", "Lock")
+}
+
+func cwvOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryOverviewStat(cwvStatusFromIssues(issues, healthScore, updated), "Core Web Vitals", "Gauge")
+}
+
+func categoryOverviewStat(info gin.H, tileLabel, icon string) gin.H {
+	label, _ := info["label"].(string)
+	status, _ := info["status"].(string)
+	checked, _ := info["checked_at"].(string)
+	if status == "unknown" || label == "—" {
+		return dashStat(tileLabel, "Run audit", icon)
 	}
-	return fmt.Sprintf("%.1f%%", n)
+	change := "Last audit"
+	if checked != "" {
+		change = checked
+	}
+	trend := "flat"
+	switch status {
+	case "pass":
+		trend = "up"
+	case "fail":
+		trend = "down"
+	}
+	return gin.H{
+		"label":  tileLabel,
+		"value":  label,
+		"change": change,
+		"trend":  trend,
+		"icon":   icon,
+	}
+}
+
+func rankedKeywordStat(label string, count int, hasGSC bool) gin.H {
+	if !hasGSC && count == 0 {
+		return dashStat(label, "Connect GSC", "Search")
+	}
+	if count == 0 {
+		return dashStat(label, "No rankings", "Search")
+	}
+	return gin.H{
+		"label":  label,
+		"value":  strconv.Itoa(count),
+		"change": "GSC queries",
+		"trend":  "flat",
+		"icon":   "Search",
+	}
+}
+
+func socialCountStat(label string, n int64, liveSocial int, change, icon string) gin.H {
+	if liveSocial == 0 {
+		return dashStat(label, "Connect social", icon)
+	}
+	return gin.H{
+		"label":  label,
+		"value":  utils.FormatNumber(n),
+		"change": change,
+		"trend":  "flat",
+		"icon":   icon,
+	}
+}
+
+func socialRateValue(rate float64, liveSocial int) string {
+	if liveSocial == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f%%", rate)
+}
+
+func followerGainStat(delta int64, hasGain bool, liveSocial int) gin.H {
+	if liveSocial == 0 {
+		return dashStat("Followers Gained", "Connect social", "UserPlus")
+	}
+	if !hasGain {
+		return dashStat("Followers Gained", "Need 2 syncs", "UserPlus")
+	}
+	trend := "flat"
+	if delta > 0 {
+		trend = "up"
+	} else if delta < 0 {
+		trend = "down"
+	}
+	change := fmt.Sprintf("%+d", delta)
+	if delta == 0 {
+		change = "0"
+	}
+	return gin.H{
+		"label":  "Followers Gained",
+		"value":  fmt.Sprintf("%+d", delta),
+		"change": change,
+		"trend":  trend,
+		"icon":   "UserPlus",
+	}
+}
+
+// keywordPositionBuckets counts GSC-ranked queries only (position > 0).
+// Autocomplete rows have position 0 and are ignored.
+func keywordPositionBuckets(kws []models.KeywordResult) (ranked, top3, page1 int) {
+	for _, k := range kws {
+		if k.Position <= 0 {
+			continue
+		}
+		ranked++
+		if k.Position <= 3 {
+			top3++
+		}
+		if k.Position <= 10 {
+			page1++
+		}
+	}
+	return
+}
+
+// socialFollowerDelta is newest-minus-oldest live followers per platform,
+// summed. Need at least two snapshots on one platform.
+func socialFollowerDelta(history []models.SocialMetric) (delta int64, ok bool) {
+	type ends struct {
+		newest, oldest models.SocialMetric
+		seen           int
+	}
+	byPlat := map[string]*ends{}
+	for i := range history {
+		sm := history[i]
+		if sm.IsSimulated {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(sm.Platform))
+		if key == "" {
+			continue
+		}
+		p, exists := byPlat[key]
+		if !exists {
+			p = &ends{newest: sm, oldest: sm, seen: 1}
+			byPlat[key] = p
+			continue
+		}
+		p.seen++
+		if sm.RecordedAt.After(p.newest.RecordedAt) || (sm.RecordedAt.Equal(p.newest.RecordedAt) && sm.ID > p.newest.ID) {
+			p.newest = sm
+		}
+		if sm.RecordedAt.Before(p.oldest.RecordedAt) || (sm.RecordedAt.Equal(p.oldest.RecordedAt) && sm.ID < p.oldest.ID) {
+			p.oldest = sm
+		}
+	}
+	for _, p := range byPlat {
+		if p.seen < 2 || p.newest.ID == p.oldest.ID {
+			continue
+		}
+		ok = true
+		delta += p.newest.Followers - p.oldest.Followers
+	}
+	return
 }

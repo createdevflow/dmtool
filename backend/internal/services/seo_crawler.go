@@ -1,5 +1,5 @@
 // Package services provides the SEOCrawler — a real Go HTTP crawler that
-// fetches a target URL and performs 13 technical SEO checks without any
+// fetches a target URL and performs technical SEO checks without any
 // third-party paid API.
 package services
 
@@ -35,10 +35,13 @@ type AuditCheck struct {
 // AuditResult is the full output of a crawl.
 type AuditResult struct {
 	URL        string       `json:"url"`
-	Score      int          `json:"score"`       // 0-100
+	Score      int          `json:"score"` // 0-100
 	Checks     []AuditCheck `json:"checks"`
 	CrawledAt  time.Time    `json:"crawled_at"`
 	LoadTimeMs int64        `json:"load_time_ms"`
+	Robots     RobotsReport `json:"robots"`
+	HTTPS      HTTPSReport  `json:"https"`
+	CWV        CWVReport    `json:"cwv"`
 }
 
 // SEOCrawlerService crawls a URL and returns a structured AuditResult.
@@ -47,11 +50,14 @@ type SEOCrawlerService interface {
 }
 
 type seoCrawler struct {
-	client *http.Client
+	client    *http.Client
+	psiClient *http.Client
+	psiAPIKey string
 }
 
-// NewSEOCrawlerService returns a new crawler with a 15-second timeout.
-func NewSEOCrawlerService() SEOCrawlerService {
+// NewSEOCrawlerService returns a crawler with a 15-second page timeout.
+// psiAPIKey is optional; PageSpeed Insights is still attempted without it.
+func NewSEOCrawlerService(psiAPIKey string) SEOCrawlerService {
 	return &seoCrawler{
 		client: &http.Client{
 			Timeout: 15 * time.Second,
@@ -62,6 +68,8 @@ func NewSEOCrawlerService() SEOCrawlerService {
 				return nil
 			},
 		},
+		psiClient: &http.Client{Timeout: 55 * time.Second},
+		psiAPIKey: psiAPIKey,
 	}
 }
 
@@ -130,24 +138,31 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 	hasStructuredData := strings.Contains(bodyStr, `"@type"`) || strings.Contains(bodyStr, `application/ld+json`)
 	imagesMissingAlt := countImagesMissingAlt(doc)
 
+	// PageSpeed Insights in parallel with on-page checks (can take ~30–55s).
+	var (
+		cwvReport CWVReport
+		cwvChecks []AuditCheck
+	)
+	var cwvWG sync.WaitGroup
+	cwvWG.Add(1)
+	go func() {
+		defer cwvWG.Done()
+		psi := c.psiClient
+		if psi == nil {
+			psi = &http.Client{Timeout: 55 * time.Second}
+		}
+		cwvReport, cwvChecks = InspectCWV(psi, result.URL, c.psiAPIKey, result.CrawledAt)
+	}()
+
 	// ── 3. Run checks ──────────────────────────────────────────────────────
 
-	// Check: HTTPS
-	if parsedURL.Scheme == "https" {
-		result.Checks = append(result.Checks, AuditCheck{
-			Category: "security", Label: "HTTPS",
-			Status: CheckPass, Severity: "high",
-			Detail:         "Site is served over HTTPS.",
-			Recommendation: "",
-		})
-	} else {
-		result.Checks = append(result.Checks, AuditCheck{
-			Category: "security", Label: "HTTPS",
-			Status: CheckFail, Severity: "high",
-			Detail:         "Site is not using HTTPS.",
-			Recommendation: "Install an SSL certificate and redirect all HTTP traffic to HTTPS.",
-		})
+	finalURL := parsedURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL
 	}
+	httpsReport, httpsChecks := InspectHTTPS(c.client, finalURL, doc, resp.Header, result.CrawledAt)
+	result.HTTPS = httpsReport
+	result.Checks = append(result.Checks, httpsChecks...)
 
 	// Check: HTTP Status Code
 	if resp.StatusCode == 200 {
@@ -373,21 +388,20 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 		})
 	}
 
-	// Fetch robots.txt and sitemap.xml concurrently.
 	robotsURL := fmt.Sprintf("%s://%s/robots.txt", parsedURL.Scheme, parsedURL.Host)
 	sitemapURL := fmt.Sprintf("%s://%s/sitemap.xml", parsedURL.Scheme, parsedURL.Host)
 
 	var (
-		robotsResp *http.Response
-		smResp     *http.Response
-		robotsErr  error
-		smErr      error
+		robotsReport RobotsReport
+		robotsChecks []AuditCheck
+		smResp       *http.Response
+		smErr        error
 	)
 	var fetchWG sync.WaitGroup
 	fetchWG.Add(2)
 	go func() {
 		defer fetchWG.Done()
-		robotsResp, robotsErr = c.client.Get(robotsURL)
+		robotsReport, robotsChecks = InspectRobots(c.client, robotsURL, result.CrawledAt)
 	}()
 	go func() {
 		defer fetchWG.Done()
@@ -395,27 +409,9 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 	}()
 	fetchWG.Wait()
 
-	// Check: Robots.txt
-	if robotsErr == nil && robotsResp != nil {
-		defer robotsResp.Body.Close()
-		if robotsResp.StatusCode == 200 {
-			result.Checks = append(result.Checks, AuditCheck{
-				Category: "technical", Label: "robots.txt",
-				Status: CheckPass, Severity: "medium",
-				Detail:         "robots.txt found at " + robotsURL,
-				Recommendation: "",
-			})
-		} else {
-			result.Checks = append(result.Checks, AuditCheck{
-				Category: "technical", Label: "robots.txt",
-				Status: CheckWarning, Severity: "low",
-				Detail:         "robots.txt not found (returned non-200).",
-				Recommendation: "Create a robots.txt file to guide search engine crawlers.",
-			})
-		}
-	}
+	result.Robots = robotsReport
+	result.Checks = append(result.Checks, robotsChecks...)
 
-	// Check: Sitemap.xml
 	if smErr == nil && smResp != nil {
 		defer smResp.Body.Close()
 		if smResp.StatusCode == 200 {
@@ -433,7 +429,18 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 				Recommendation: "Generate and submit an XML sitemap to Google Search Console.",
 			})
 		}
+	} else if smErr != nil {
+		result.Checks = append(result.Checks, AuditCheck{
+			Category: "technical", Label: "XML Sitemap",
+			Status: CheckWarning, Severity: "medium",
+			Detail:         "Could not fetch sitemap.xml: " + smErr.Error(),
+			Recommendation: "Generate and submit an XML sitemap to Google Search Console.",
+		})
 	}
+
+	cwvWG.Wait()
+	result.CWV = cwvReport
+	result.Checks = append(result.Checks, cwvChecks...)
 
 	// ── 4. Calculate score ─────────────────────────────────────────────────
 	total := len(result.Checks)

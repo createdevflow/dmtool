@@ -65,16 +65,15 @@ func main() {
 
 	entitlementsSvc := entitlements.New(database, subscriptionRepo, planRepo, projectRepo)
 
-
 	encKey := utils.EncryptionKeyFromString(cfg.EncryptionKey)
 
 	dataForSEOService := services.NewDataForSEOService(cfg.DataForSEOLogin, cfg.DataForSEOPassword)
 	rapidAPIService := services.NewRapidAPIService(cfg.RapidAPIKey)
-	
-	// Deprecated OAuth services (kept for legacy interfaces but with dummy impl if needed, 
+
+	// Deprecated OAuth services (kept for legacy interfaces but with dummy impl if needed,
 	// or we can remove them if we refactor all routes)
 	// We'll replace them below.
-	crawlerService := services.NewSEOCrawlerService()
+	crawlerService := services.NewSEOCrawlerService(cfg.PageSpeedAPIKey)
 	keywordService := services.NewKeywordService()
 	socialScraperService := services.NewSocialScraperService()
 	metaService := services.NewMetaService()
@@ -168,7 +167,6 @@ func main() {
 
 	// Public plans endpoint (no auth — pricing page)
 	r.GET("/api/plans", handlers.NewPlansHandler(planRepo).List)
-
 
 	// ── 9. Protected API routes ──────────────────────────────────────────────
 	api := r.Group("/api")
@@ -380,7 +378,6 @@ func registerProjectRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRep
 	}
 }
 
-
 func registerDashboardRoutes(g *gin.RouterGroup,
 	projectRepo repository.ProjectRepository,
 	metricRepo repository.MetricRepository,
@@ -451,8 +448,6 @@ func registerContentRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRep
 	g.POST("/content/generate", h.Generate)
 }
 
-
-
 func registerTaskRoutes(g *gin.RouterGroup, insightRepo repository.InsightRepository) {
 	h := handlers.NewTaskHandler(insightRepo)
 
@@ -465,7 +460,7 @@ func registerSystemRoutes(g *gin.RouterGroup, projectRepo repository.ProjectRepo
 	g.GET("/system/automations", h.GetAutomations)
 	g.POST("/system/automations", h.CreateAutomation)
 	g.PATCH("/system/automations/:id/toggle", h.ToggleAutomation)
-	
+
 	g.GET("/system/calendar", h.GetCalendar)
 	g.POST("/system/calendar/event", h.CreateCalendarEvent)
 	g.PATCH("/system/calendar/event/:id", h.UpdateCalendarEvent)

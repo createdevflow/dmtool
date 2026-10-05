@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -103,6 +104,9 @@ func (h *SEOHandler) AuditRun(c *gin.Context) {
 		"checks":       result.Checks,
 		"load_time_ms": result.LoadTimeMs,
 		"crawled_at":   result.CrawledAt,
+		"robots":       result.Robots,
+		"https":        result.HTTPS,
+		"cwv":          result.CWV,
 		"issues_found": issuesSummary,
 	}, nil)
 }
@@ -322,6 +326,9 @@ func (h *SEOHandler) GetAuditStatus(c *gin.Context) {
 		"issues_count": len(issues),
 		"url":          project.URL,
 		"last_updated": project.UpdatedAt.Format(time.RFC3339),
+		"robots":       robotsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"https":        httpsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"cwv":          cwvStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 	}, nil)
 }
 
@@ -342,9 +349,13 @@ func (h *SEOHandler) PublicAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"url":    result.URL,
-			"score":  result.Score,
-			"checks": result.Checks,
+			"url":        result.URL,
+			"score":      result.Score,
+			"checks":     result.Checks,
+			"crawled_at": result.CrawledAt,
+			"robots":     result.Robots,
+			"https":      result.HTTPS,
+			"cwv":        result.CWV,
 		},
 	})
 }
@@ -366,6 +377,63 @@ func countIssues(checks []services.AuditCheck) gin.H {
 		}
 	}
 	return gin.H{"high": high, "medium": med, "low": low}
+}
+
+func robotsStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryStatusFromIssues(issues, "robots", healthScore, updated)
+}
+
+func httpsStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryStatusFromIssues(issues, "https", healthScore, updated)
+}
+
+func cwvStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	info := categoryStatusFromIssues(issues, "cwv", healthScore, updated)
+	switch info["label"] {
+	case "Pass":
+		info["label"] = "Good"
+	case "Warning":
+		info["label"] = "Needs work"
+	case "Fail":
+		info["label"] = "Poor"
+	}
+	return info
+}
+
+func categoryStatusFromIssues(issues []models.SEOIssue, category string, healthScore int, updated time.Time) gin.H {
+	if healthScore == 0 && len(issues) == 0 {
+		return gin.H{
+			"status":     "unknown",
+			"label":      "—",
+			"checked_at": "",
+		}
+	}
+	fail, warn := false, false
+	for _, issue := range issues {
+		if !strings.EqualFold(issue.Category, category) {
+			continue
+		}
+		if issue.Severity == models.SeverityHigh {
+			fail = true
+		} else {
+			warn = true
+		}
+	}
+	status, label := "pass", "Pass"
+	if fail {
+		status, label = "fail", "Fail"
+	} else if warn {
+		status, label = "warning", "Warning"
+	}
+	checked := ""
+	if !updated.IsZero() {
+		checked = updated.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	return gin.H{
+		"status":     status,
+		"label":      label,
+		"checked_at": checked,
+	}
 }
 
 func issuesFromChecks(projectID uint, targetURL string, checks []services.AuditCheck) []models.SEOIssue {

@@ -9,7 +9,7 @@ const MotionDiv = dynamic(
 import { 
   ArrowUpRight, ArrowDownRight, Activity, Globe, 
   Users, Target, Zap, MousePointer2, TrendingUp,
-  BarChart3, Sparkles
+  BarChart3, Sparkles, Search, AlertCircle, Eye, UserPlus, FileText, Lock, Gauge
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Mode } from "./dashboard-mode-context";
@@ -28,6 +28,7 @@ interface GrowthSnapshotProps {
 const iconMap: Record<string, any> = {
   Target, Globe, TrendingUp, MousePointer2,
   Activity, Users, Zap, BarChart3, Sparkles,
+  Search, AlertCircle, Eye, UserPlus, FileText, Lock, Gauge,
 };
 
 // Fallback stats shown while API data loads. trend is "flat" (never
@@ -37,19 +38,35 @@ const fallbackWebsite = [
   { label: "SEO Health", value: "—", change: "—", trend: "flat", icon: Target },
   { label: "Organic Traffic", value: "—", change: "—", trend: "flat", icon: Globe },
   { label: "Search Impressions", value: "—", change: "—", trend: "flat", icon: TrendingUp },
-  { label: "CTR", value: "—", change: "—", trend: "flat", icon: MousePointer2 },
+  { label: "Click-Through Rate", value: "—", change: "—", trend: "flat", icon: MousePointer2 },
+  { label: "Ranked Keywords", value: "—", change: "—", trend: "flat", icon: Search },
+  { label: "Top 3 Keywords", value: "—", change: "—", trend: "flat", icon: Search },
+  { label: "Page 1 Keywords", value: "—", change: "—", trend: "flat", icon: Search },
+  { label: "Open SEO Issues", value: "—", change: "—", trend: "flat", icon: AlertCircle },
+  { label: "robots.txt", value: "—", change: "—", trend: "flat", icon: FileText },
+  { label: "HTTPS", value: "—", change: "—", trend: "flat", icon: Lock },
+  { label: "Core Web Vitals", value: "—", change: "—", trend: "flat", icon: Gauge },
 ];
 const fallbackSocial = [
-  { label: "Engagement Rate", value: "—", change: "—", trend: "flat", icon: Activity },
   { label: "Total Followers", value: "—", change: "—", trend: "flat", icon: Users },
+  { label: "Followers Gained", value: "—", change: "—", trend: "flat", icon: UserPlus },
   { label: "Audience Reach", value: "—", change: "—", trend: "flat", icon: Zap },
-  { label: "Content Score", value: "—", change: "—", trend: "flat", icon: BarChart3 },
+  { label: "Engagement Rate", value: "—", change: "—", trend: "flat", icon: Activity },
+  { label: "Profile Visits", value: "—", change: "—", trend: "flat", icon: Eye },
+  { label: "Published Posts", value: "—", change: "—", trend: "flat", icon: FileText },
 ];
 const fallbackCombined = [
-  { label: "Growth Index", value: "—", change: "—", trend: "flat", icon: TrendingUp },
-  { label: "Aggregate Reach", value: "—", change: "—", trend: "flat", icon: Zap },
-  { label: "Open SEO Issues", value: "—", change: "—", trend: "flat", icon: Target },
-  { label: "Ranked Keywords", value: "—", change: "—", trend: "flat", icon: Activity },
+  { label: "Organic Traffic", value: "—", change: "—", trend: "flat", icon: Globe },
+  { label: "Search Impressions", value: "—", change: "—", trend: "flat", icon: TrendingUp },
+  { label: "Total Followers", value: "—", change: "—", trend: "flat", icon: Users },
+  { label: "Engagement Rate", value: "—", change: "—", trend: "flat", icon: Activity },
+  { label: "SEO Health", value: "—", change: "—", trend: "flat", icon: Target },
+  { label: "Open SEO Issues", value: "—", change: "—", trend: "flat", icon: AlertCircle },
+  { label: "Ranked Keywords", value: "—", change: "—", trend: "flat", icon: Search },
+  { label: "Top 3 Keywords", value: "—", change: "—", trend: "flat", icon: Search },
+  { label: "robots.txt", value: "—", change: "—", trend: "flat", icon: FileText },
+  { label: "HTTPS", value: "—", change: "—", trend: "flat", icon: Lock },
+  { label: "Core Web Vitals", value: "—", change: "—", trend: "flat", icon: Gauge },
 ];
 
 function mapStats(raw?: any[]) {
@@ -91,6 +108,8 @@ const SOCIAL_SIGNAL_LABELS = new Set([
   "Engagement Rate",
   "Total Followers",
   "Audience Reach",
+  "Profile Visits",
+  "Published Posts",
 ]);
 
 function tileHasSignal(stat: any): boolean {
@@ -100,9 +119,9 @@ function tileHasSignal(stat: any): boolean {
   return pct !== null && pct !== 0;
 }
 
-// Growth Index is a backend composite. With no traffic, social, or
-// health signal the formula still emits a number (~20). Treat that as
-// empty and show "—" instead of a fake score.
+// Combined tiles used to include a computed Growth Index that could
+// look real with no data. Keep the empty-signal check so a leftover
+// Index tile still renders as "—" if an old payload appears.
 function hasUnderlyingGrowthSignal(
   project: any,
   snapshotData?: GrowthSnapshotProps["snapshotData"] | null
@@ -200,9 +219,6 @@ export function GrowthSnapshot({ mode, project, snapshotData }: GrowthSnapshotPr
                     <div className="space-y-1">
                       <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
                         {stat.label}
-                        {stat.label === "Growth Index" && (
-                          <span className="normal-case tracking-normal font-normal"> (computed)</span>
-                        )}
                       </p>
                       <p className="text-3xl font-semibold text-slate-900 tracking-tight tabular-nums">{stat.value}</p>
                     </div>

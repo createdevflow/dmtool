@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Search, ShieldCheck, AlertCircle,
   Zap, Loader2, CheckCircle2, RefreshCw,
-  ExternalLink, Clock, AlertTriangle, Info, FileText, Lock, Gauge, ListTree, ScanSearch,
+  ExternalLink, Clock, AlertTriangle, Info, FileText, Lock, Gauge, ListTree, ScanSearch, Timer,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { dashboardApi } from "@/lib/api-client";
@@ -107,18 +107,60 @@ function cwvSummary(cwv: any): string {
       parts.push("Chrome UX Report field data for this URL (mobile, ~28 days).");
     }
   } else if (typeof cwv?.lab_performance === "number") {
-    parts.push(`Not enough CrUX field data to score Core Web Vitals. Lighthouse lab performance ${cwv.lab_performance}/100 is not CWV.`);
-    if (cwv.lab_lcp) parts.push(`Lab LCP ${cwv.lab_lcp}.`);
-    if (cwv.lab_cls) parts.push(`Lab CLS ${cwv.lab_cls}.`);
+    parts.push("Not enough CrUX field data to score Core Web Vitals. Lighthouse lab is listed under PageSpeed Lab and is not CWV.");
   } else if (cwv?.error) {
     parts.push(`PageSpeed Insights unavailable: ${cwv.error}`);
   } else {
     parts.push("Core Web Vitals from the last technical audit. Re-run the audit for LCP, INP, and CLS from Chrome UX Report.");
   }
   if (cwv?.field_available && typeof cwv.lab_performance === "number") {
-    parts.push(`Lighthouse lab ${cwv.lab_performance}/100 (simulated, not CWV).`);
+    parts.push("Lighthouse lab is listed under PageSpeed Lab (simulated, not CWV).");
   }
-  parts.push("Mobile PageSpeed Insights for this URL only.");
+  parts.push("Mobile Chrome UX Report for this URL only.");
+  return parts.join(" ");
+}
+
+function labHeadline(cwv: any, lighthouse: any): string {
+  if (typeof cwv?.lab_performance === "number") return `${cwv.lab_performance}/100 lab`;
+  if (lighthouse?.label) return lighthouse.label;
+  if (lighthouse?.status === "pass") return "Pass";
+  if (lighthouse?.status === "fail") return "Fail";
+  if (lighthouse?.status === "warning") return "Warning";
+  if (cwv?.lab_fcp || cwv?.lab_ttfb) return "Lab metrics";
+  return "Not checked";
+}
+
+function labSummary(cwv: any): string {
+  const parts: string[] = [];
+  if (typeof cwv?.lab_performance === "number") {
+    parts.push(`Lighthouse mobile performance ${cwv.lab_performance}/100.`);
+  }
+  if (cwv?.lab_fcp) parts.push(`Lab FCP ${cwv.lab_fcp}.`);
+  if (cwv?.lab_ttfb) parts.push(`Lab TTFB ${cwv.lab_ttfb}.`);
+  if (cwv?.lab_lcp) parts.push(`Lab LCP ${cwv.lab_lcp}.`);
+  if (cwv?.lab_cls) parts.push(`Lab CLS ${cwv.lab_cls}.`);
+  const opps = Array.isArray(cwv?.opportunities) ? cwv.opportunities : [];
+  if (opps.length) {
+    const lines = opps.slice(0, 8).map((o: any) => {
+      const title = o.title || o.id;
+      if (o.display) return `${title} (${o.display})`;
+      if (o.savings_ms > 0) return `${title} (~${o.savings_ms}ms)`;
+      return title;
+    }).filter(Boolean);
+    if (lines.length) parts.push(`Opportunities: ${lines.join("; ")}.`);
+  }
+  if (typeof cwv?.desktop_performance === "number") {
+    const desk = [`Desktop lab ${cwv.desktop_performance}/100`];
+    if (cwv.desktop_fcp) desk.push(`FCP ${cwv.desktop_fcp}`);
+    if (cwv.desktop_ttfb) desk.push(`TTFB ${cwv.desktop_ttfb}`);
+    parts.push(`${desk.join(" · ")}.`);
+  } else if (cwv?.desktop_error) {
+    parts.push(`Desktop PageSpeed Insights unavailable: ${cwv.desktop_error}.`);
+  }
+  if (parts.length === 0) {
+    parts.push("PageSpeed lab from the last technical audit. Re-run the audit for Lighthouse FCP, TTFB, opportunities, and desktop.");
+  }
+  parts.push("Lab is a simulated Lighthouse test on this URL — not Core Web Vitals and not a sitewide crawl.");
   return parts.join(" ");
 }
 
@@ -212,6 +254,9 @@ export default function SiteExplorerPage() {
                 robots: status.robots,
                 https: status.https,
                 cwv: status.cwv,
+                lighthouse: status.lighthouse,
+                sitemap: status.sitemap,
+                indexability: status.indexability,
               });
             }
           } catch {}
@@ -347,7 +392,7 @@ export default function SiteExplorerPage() {
         </div>
       </div>
 
-      {(auditResult?.robots || auditResult?.https || auditResult?.cwv || auditResult?.sitemap || auditResult?.indexability) && (
+      {(auditResult?.robots || auditResult?.https || auditResult?.cwv || auditResult?.lighthouse || auditResult?.sitemap || auditResult?.indexability) && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
           {auditResult?.robots && (
             <Card className="border-slate-100 rounded-2xl p-6 bg-white">
@@ -424,6 +469,29 @@ export default function SiteExplorerPage() {
                   {(auditResult.cwv.checked_at || auditResult.crawled_at) && (
                     <p className="text-xs text-slate-400 mt-2">
                       Last checked {new Date(auditResult.cwv.checked_at || auditResult.crawled_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+          {(auditResult?.cwv || auditResult?.lighthouse) && (
+            <Card className="border-slate-100 rounded-2xl p-6 bg-white">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+                  <Timer className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PageSpeed Lab</p>
+                  <p className="text-xl font-semibold text-slate-900 mt-0.5">
+                    {labHeadline(auditResult.cwv, auditResult.lighthouse)}
+                  </p>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {labSummary(auditResult.cwv)}
+                  </p>
+                  {(auditResult.cwv?.checked_at || auditResult.lighthouse?.checked_at || auditResult.crawled_at) && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Last checked {new Date(auditResult.cwv?.checked_at || auditResult.lighthouse?.checked_at || auditResult.crawled_at).toLocaleString()}
                     </p>
                   )}
                 </div>

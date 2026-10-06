@@ -150,6 +150,7 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		robotsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		httpsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		cwvOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		lighthouseOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		sitemapOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		indexabilityOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 	}
@@ -241,6 +242,7 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		robotsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		httpsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		cwvOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		lighthouseOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		sitemapOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		indexabilityOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 	}
@@ -539,6 +541,10 @@ func httpsOverviewStat(issues []models.SEOIssue, healthScore int, updated time.T
 
 func cwvOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
 	return categoryOverviewStat(cwvStatusFromIssues(issues, healthScore, updated), "Core Web Vitals", "Gauge")
+}
+
+func lighthouseOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryOverviewStat(lighthouseStatusFromIssues(issues, healthScore, updated), "PageSpeed Lab", "Timer")
 }
 
 func sitemapOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {

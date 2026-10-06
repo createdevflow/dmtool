@@ -124,7 +124,7 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	web := labels(payload.WebsiteStats)
 	if !containsAll(web, "SEO Health", "Organic Traffic", "Search Impressions", "Click-Through Rate",
 		"Ranked Keywords", "Top 3 Keywords", "Page 1 Keywords", "Top Page", "Top Country", "Mobile Traffic",
-		"Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals", "XML Sitemap", "Indexability") {
+		"Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals", "PageSpeed Lab", "XML Sitemap", "Indexability") {
 		t.Fatalf("website labels=%v", web)
 	}
 	if got := valueFor(payload.WebsiteStats, "Top Page"); got != "—" {
@@ -169,6 +169,9 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	}
 	if !contains(comb, "XML Sitemap") {
 		t.Fatalf("combined missing XML Sitemap: %v", comb)
+	}
+	if !contains(comb, "PageSpeed Lab") {
+		t.Fatalf("combined missing PageSpeed Lab: %v", comb)
 	}
 	if !contains(comb, "Indexability") {
 		t.Fatalf("combined missing Indexability: %v", comb)
@@ -336,6 +339,30 @@ func TestSitemapStatusFromIssues(t *testing.T) {
 	}, 70, updated)
 	if ignoreRobots["label"] != "Pass" {
 		t.Fatalf("robots fail should not mark sitemap fail, got %+v", ignoreRobots)
+	}
+}
+
+func TestLighthouseStatusFromIssues(t *testing.T) {
+	updated := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	unknown := lighthouseStatusFromIssues(nil, 0, updated)
+	if unknown["status"] != "unknown" {
+		t.Fatalf("no audit want unknown, got %+v", unknown)
+	}
+	pass := lighthouseStatusFromIssues(nil, 70, updated)
+	if pass["label"] != "Pass" {
+		t.Fatalf("audited with no lighthouse issues want Pass, got %+v", pass)
+	}
+	fail := lighthouseStatusFromIssues([]models.SEOIssue{
+		{Category: "lighthouse", Severity: models.SeverityHigh, Detail: "lab 40"},
+	}, 40, updated)
+	if fail["label"] != "Fail" {
+		t.Fatalf("want Fail, got %+v", fail)
+	}
+	ignoreCWV := lighthouseStatusFromIssues([]models.SEOIssue{
+		{Category: "cwv", Severity: models.SeverityHigh, Detail: "poor LCP"},
+	}, 70, updated)
+	if ignoreCWV["label"] != "Pass" {
+		t.Fatalf("cwv fail should not mark PageSpeed Lab fail, got %+v", ignoreCWV)
 	}
 }
 

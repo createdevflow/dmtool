@@ -331,6 +331,7 @@ func (h *SEOHandler) GetAuditStatus(c *gin.Context) {
 		"robots":       robotsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 		"https":        httpsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 		"cwv":          cwvStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"lighthouse":   lighthouseStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 		"sitemap":      sitemapStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 		"indexability": indexabilityStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 	}, nil)
@@ -404,6 +405,10 @@ func cwvStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time
 		info["label"] = "Poor"
 	}
 	return info
+}
+
+func lighthouseStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryStatusFromIssues(issues, "lighthouse", healthScore, updated)
 }
 
 func sitemapStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {

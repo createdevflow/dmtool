@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -34,21 +36,41 @@ type CWVMetric struct {
 // CWVReport is PageSpeed Insights field (CrUX) + lab (Lighthouse) for one URL.
 // Field data is Core Web Vitals. Lab is not CWV and is labeled separately.
 type CWVReport struct {
-	URL            string     `json:"url"`
-	Strategy       string     `json:"strategy"`
-	FieldScope     string     `json:"field_scope,omitempty"` // url | origin
-	FieldAvailable bool       `json:"field_available"`
-	OverallLabel   string     `json:"overall_label"`
-	LCP            *CWVMetric `json:"lcp,omitempty"`
-	INP            *CWVMetric `json:"inp,omitempty"`
-	CLS            *CWVMetric `json:"cls,omitempty"`
-	LabPerformance *int       `json:"lab_performance,omitempty"`
-	LabLCP         string     `json:"lab_lcp,omitempty"`
-	LabCLS         string     `json:"lab_cls,omitempty"`
-	Error          string     `json:"error,omitempty"`
-	Score          int        `json:"score"`
-	Status         string     `json:"status"`
-	CheckedAt      time.Time  `json:"checked_at"`
+	URL            string           `json:"url"`
+	Strategy       string           `json:"strategy"`
+	FieldScope     string           `json:"field_scope,omitempty"` // url | origin
+	FieldAvailable bool             `json:"field_available"`
+	OverallLabel   string           `json:"overall_label"`
+	LCP            *CWVMetric       `json:"lcp,omitempty"`
+	INP            *CWVMetric       `json:"inp,omitempty"`
+	CLS            *CWVMetric       `json:"cls,omitempty"`
+	LabPerformance *int             `json:"lab_performance,omitempty"`
+	LabLCP         string           `json:"lab_lcp,omitempty"`
+	LabFCP         string           `json:"lab_fcp,omitempty"`
+	LabTTFB        string           `json:"lab_ttfb,omitempty"`
+	LabCLS         string           `json:"lab_cls,omitempty"`
+	Opportunities  []PSIOpportunity `json:"opportunities,omitempty"`
+
+	DesktopPerformance *int   `json:"desktop_performance,omitempty"`
+	DesktopLCP         string `json:"desktop_lcp,omitempty"`
+	DesktopFCP         string `json:"desktop_fcp,omitempty"`
+	DesktopTTFB        string `json:"desktop_ttfb,omitempty"`
+	DesktopCLS         string `json:"desktop_cls,omitempty"`
+	DesktopError       string `json:"desktop_error,omitempty"`
+
+	Error     string    `json:"error,omitempty"`
+	Score     int       `json:"score"`
+	Status    string    `json:"status"`
+	CheckedAt time.Time `json:"checked_at"`
+}
+
+// PSIOpportunity is one Lighthouse lab opportunity with measured savings.
+// Simulated — not Core Web Vitals and not a sitewide crawl.
+type PSIOpportunity struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Display   string `json:"display,omitempty"`
+	SavingsMs int    `json:"savings_ms,omitempty"`
 }
 
 type psiResponse struct {
@@ -82,11 +104,22 @@ type psiLighthouse struct {
 }
 
 type psiAudit struct {
-	NumericValue *float64 `json:"numericValue"`
-	DisplayValue string   `json:"displayValue"`
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	Score        *float64         `json:"score"`
+	NumericValue *float64         `json:"numericValue"`
+	DisplayValue string           `json:"displayValue"`
+	Details      *psiAuditDetails `json:"details"`
 }
 
-// InspectCWV calls PageSpeed Insights (mobile) for field CrUX + lab Lighthouse.
+type psiAuditDetails struct {
+	Type                string  `json:"type"`
+	OverallSavingsMs    float64 `json:"overallSavingsMs"`
+	OverallSavingsBytes float64 `json:"overallSavingsBytes"`
+}
+
+// InspectCWV calls PageSpeed Insights for mobile field CrUX + lab Lighthouse,
+// and a parallel desktop lab run. Desktop CrUX is not mixed into CWV.
 func InspectCWV(client *http.Client, pageURL, apiKey string, checkedAt time.Time) (CWVReport, []AuditCheck) {
 	if checkedAt.IsZero() {
 		checkedAt = time.Now().UTC()
@@ -105,36 +138,42 @@ func InspectCWV(client *http.Client, pageURL, apiKey string, checkedAt time.Time
 			"No URL to measure. Last checked "+checked+".", "")}
 	}
 
-	body, statusCode, err := fetchPagespeed(client, pageURL, apiKey)
-	if err != nil {
+	var (
+		mobileBody, desktopBody []byte
+		mobileCode, desktopCode int
+		mobileErr, desktopErr   error
+	)
+	var fetchWG sync.WaitGroup
+	fetchWG.Add(2)
+	go func() {
+		defer fetchWG.Done()
+		mobileBody, mobileCode, mobileErr = fetchPagespeed(client, pageURL, apiKey, "mobile")
+	}()
+	go func() {
+		defer fetchWG.Done()
+		desktopBody, desktopCode, desktopErr = fetchPagespeed(client, pageURL, apiKey, "desktop")
+	}()
+	fetchWG.Wait()
+
+	if mobileErr != nil {
 		report.OverallLabel = "Unavailable"
-		report.Error = err.Error()
-		return report, []AuditCheck{cwvCheck("Core Web Vitals (CrUX)", CheckWarning, "medium",
-			fmt.Sprintf("PageSpeed Insights could not measure this URL: %s. Last checked %s.", err.Error(), checked),
+		report.Error = mobileErr.Error()
+		applyDesktopLab(&report, desktopBody, desktopCode, desktopErr)
+		checks := []AuditCheck{cwvCheck("Core Web Vitals (CrUX)", CheckWarning, "medium",
+			fmt.Sprintf("PageSpeed Insights could not measure this URL: %s. Last checked %s.", mobileErr.Error(), checked),
 			"Set PAGESPEED_API_KEY (Google Cloud PageSpeed Insights API) if anonymous quota is exhausted.")}
+		return report, append(checks, lighthouseExtraChecks(report, checked)...)
 	}
 
-	var psi psiResponse
-	if uerr := json.Unmarshal(body, &psi); uerr != nil {
+	psi, perr := decodePSI(mobileBody, mobileCode)
+	if perr != nil {
 		report.OverallLabel = "Unavailable"
-		report.Error = "invalid PageSpeed JSON"
-		return report, []AuditCheck{cwvCheck("Core Web Vitals (CrUX)", CheckWarning, "medium",
-			fmt.Sprintf("PageSpeed Insights returned unreadable JSON (HTTP %d). Last checked %s.", statusCode, checked),
-			"")}
-	}
-	if psi.Error != nil && psi.Error.Message != "" {
-		report.OverallLabel = "Unavailable"
-		report.Error = psi.Error.Message
-		return report, []AuditCheck{cwvCheck("Core Web Vitals (CrUX)", CheckWarning, "medium",
-			fmt.Sprintf("PageSpeed Insights error: %s. Last checked %s.", psi.Error.Message, checked),
+		report.Error = perr.Error()
+		applyDesktopLab(&report, desktopBody, desktopCode, desktopErr)
+		checks := []AuditCheck{cwvCheck("Core Web Vitals (CrUX)", CheckWarning, "medium",
+			fmt.Sprintf("PageSpeed Insights error: %s. Last checked %s.", perr.Error(), checked),
 			"Enable the PageSpeed Insights API and set PAGESPEED_API_KEY.")}
-	}
-	if statusCode >= 400 {
-		report.OverallLabel = "Unavailable"
-		report.Error = fmt.Sprintf("HTTP %d", statusCode)
-		return report, []AuditCheck{cwvCheck("Core Web Vitals (CrUX)", CheckWarning, "medium",
-			fmt.Sprintf("PageSpeed Insights returned HTTP %d. Last checked %s.", statusCode, checked),
-			"")}
+		return report, append(checks, lighthouseExtraChecks(report, checked)...)
 	}
 
 	urlExp, originExp := psi.LoadingExperience, psi.OriginLoadingExperience
@@ -151,20 +190,62 @@ func InspectCWV(client *http.Client, pageURL, apiKey string, checkedAt time.Time
 		report.CLS = cruxMetric(exp.Metrics, "CUMULATIVE_LAYOUT_SHIFT_SCORE", "CLS", "score", true, src)
 	}
 
-	if perf, labLCP, labCLS := labFromLighthouse(psi.LighthouseResult); perf != nil || labLCP != "" || labCLS != "" {
-		report.LabPerformance = perf
-		report.LabLCP = labLCP
-		report.LabCLS = labCLS
-	}
+	lab := labFromLighthouse(psi.LighthouseResult)
+	report.LabPerformance = lab.Performance
+	report.LabLCP = lab.LCP
+	report.LabFCP = lab.FCP
+	report.LabTTFB = lab.TTFB
+	report.LabCLS = lab.CLS
+	report.Opportunities = lab.Opportunities
+
+	applyDesktopLab(&report, desktopBody, desktopCode, desktopErr)
 
 	report.Status, report.OverallLabel = cwvOverall(report)
 	report.Score = cwvScore(report)
 	return report, cwvChecksFromReport(report, checked)
 }
 
-func fetchPagespeed(client *http.Client, pageURL, apiKey string) ([]byte, int, error) {
+func decodePSI(body []byte, statusCode int) (psiResponse, error) {
+	var psi psiResponse
+	if err := json.Unmarshal(body, &psi); err != nil {
+		return psi, fmt.Errorf("invalid PageSpeed JSON (HTTP %d)", statusCode)
+	}
+	if psi.Error != nil && psi.Error.Message != "" {
+		return psi, fmt.Errorf("%s", psi.Error.Message)
+	}
+	if statusCode >= 400 {
+		return psi, fmt.Errorf("HTTP %d", statusCode)
+	}
+	return psi, nil
+}
+
+func applyDesktopLab(report *CWVReport, body []byte, statusCode int, fetchErr error) {
+	if fetchErr != nil {
+		report.DesktopError = fetchErr.Error()
+		return
+	}
+	if len(body) == 0 {
+		return
+	}
+	psi, err := decodePSI(body, statusCode)
+	if err != nil {
+		report.DesktopError = err.Error()
+		return
+	}
+	lab := labFromLighthouse(psi.LighthouseResult)
+	report.DesktopPerformance = lab.Performance
+	report.DesktopLCP = lab.LCP
+	report.DesktopFCP = lab.FCP
+	report.DesktopTTFB = lab.TTFB
+	report.DesktopCLS = lab.CLS
+}
+
+func fetchPagespeed(client *http.Client, pageURL, apiKey, strategy string) ([]byte, int, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 55 * time.Second}
+	}
+	if strategy == "" {
+		strategy = "mobile"
 	}
 	u, err := url.Parse(pagespeedRunURL)
 	if err != nil {
@@ -172,7 +253,7 @@ func fetchPagespeed(client *http.Client, pageURL, apiKey string) ([]byte, int, e
 	}
 	q := u.Query()
 	q.Set("url", pageURL)
-	q.Set("strategy", "mobile")
+	q.Set("strategy", strategy)
 	q.Set("category", "PERFORMANCE")
 	if strings.TrimSpace(apiKey) != "" {
 		q.Set("key", apiKey)
@@ -309,7 +390,17 @@ func ratingFromThreshold(name string, val float64, isCLS bool) string {
 	}
 }
 
-func labFromLighthouse(lh psiLighthouse) (perf *int, labLCP, labCLS string) {
+type labSnapshot struct {
+	Performance   *int
+	LCP           string
+	FCP           string
+	CLS           string
+	TTFB          string
+	Opportunities []PSIOpportunity
+}
+
+func labFromLighthouse(lh psiLighthouse) labSnapshot {
+	var out labSnapshot
 	if cat, ok := lh.Categories["performance"]; ok && cat.Score != nil {
 		n := int((*cat.Score)*100 + 0.5)
 		if n < 0 {
@@ -318,23 +409,77 @@ func labFromLighthouse(lh psiLighthouse) (perf *int, labLCP, labCLS string) {
 		if n > 100 {
 			n = 100
 		}
-		perf = &n
+		out.Performance = &n
 	}
-	if a, ok := lh.Audits["largest-contentful-paint"]; ok {
-		if a.DisplayValue != "" {
-			labLCP = a.DisplayValue
-		} else if a.NumericValue != nil {
-			labLCP = formatMs(*a.NumericValue)
-		}
+	out.LCP = lighthouseAuditDisplay(lh, "largest-contentful-paint", false)
+	out.FCP = lighthouseAuditDisplay(lh, "first-contentful-paint", false)
+	out.TTFB = lighthouseAuditDisplay(lh, "server-response-time", false)
+	if out.TTFB == "" {
+		out.TTFB = lighthouseAuditDisplay(lh, "time-to-first-byte", false)
 	}
-	if a, ok := lh.Audits["cumulative-layout-shift"]; ok {
+	out.CLS = lighthouseAuditDisplay(lh, "cumulative-layout-shift", true)
+	out.Opportunities = lighthouseOpportunities(lh, 8)
+	return out
+}
+
+func lighthouseAuditDisplay(lh psiLighthouse, id string, cls bool) string {
+	a, ok := lh.Audits[id]
+	if !ok {
+		return ""
+	}
+	if cls {
 		if a.NumericValue != nil {
-			labCLS = formatCLS(*a.NumericValue)
-		} else if a.DisplayValue != "" {
-			labCLS = a.DisplayValue
+			return formatCLS(*a.NumericValue)
 		}
+		return a.DisplayValue
 	}
-	return
+	if a.DisplayValue != "" {
+		return a.DisplayValue
+	}
+	if a.NumericValue != nil {
+		return formatMs(*a.NumericValue)
+	}
+	return ""
+}
+
+func lighthouseOpportunities(lh psiLighthouse, limit int) []PSIOpportunity {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]PSIOpportunity, 0)
+	for id, a := range lh.Audits {
+		if a.Details == nil || !strings.EqualFold(a.Details.Type, "opportunity") {
+			continue
+		}
+		savings := int(a.Details.OverallSavingsMs + 0.5)
+		if savings <= 0 && strings.TrimSpace(a.DisplayValue) == "" {
+			continue
+		}
+		title := strings.TrimSpace(a.Title)
+		if title == "" {
+			title = id
+		}
+		aid := a.ID
+		if aid == "" {
+			aid = id
+		}
+		out = append(out, PSIOpportunity{
+			ID:        aid,
+			Title:     title,
+			Display:   strings.TrimSpace(a.DisplayValue),
+			SavingsMs: savings,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SavingsMs == out[j].SavingsMs {
+			return out[i].Title < out[j].Title
+		}
+		return out[i].SavingsMs > out[j].SavingsMs
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func cwvOverall(r CWVReport) (status, label string) {
@@ -424,6 +569,12 @@ func cwvChecksFromReport(r CWVReport, checked string) []AuditCheck {
 		checks = append(checks, metricCheck("CLS", r.CLS, checked))
 	}
 
+	checks = append(checks, lighthouseExtraChecks(r, checked)...)
+	return checks
+}
+
+func lighthouseExtraChecks(r CWVReport, checked string) []AuditCheck {
+	checks := make([]AuditCheck, 0, 6)
 	if r.LabPerformance != nil {
 		n := *r.LabPerformance
 		labStatus, sev := CheckPass, "low"
@@ -437,19 +588,93 @@ func cwvChecksFromReport(r CWVReport, checked string) []AuditCheck {
 		if r.LabLCP != "" {
 			detail += " Lab LCP " + r.LabLCP + "."
 		}
+		if r.LabFCP != "" {
+			detail += " Lab FCP " + r.LabFCP + "."
+		}
+		if r.LabTTFB != "" {
+			detail += " Lab TTFB " + r.LabTTFB + "."
+		}
 		if r.LabCLS != "" {
 			detail += " Lab CLS " + r.LabCLS + "."
 		}
 		detail += " Lab is a simulated test, not Core Web Vitals. Last checked " + checked + "."
-		checks = append(checks, AuditCheck{
-			Category: lighthouseCategory,
-			Label:    "Lighthouse performance",
-			Status:   labStatus,
-			Severity: sev,
-			Detail:   detail,
-		})
+		checks = append(checks, lighthouseCheck("Lighthouse performance", labStatus, sev, detail, ""))
+	}
+
+	if r.LabFCP != "" {
+		checks = append(checks, lighthouseCheck("Lab FCP", CheckPass, "low",
+			fmt.Sprintf("Lighthouse mobile FCP %s. Simulated lab metric, not a Core Web Vital. Last checked %s.", r.LabFCP, checked),
+			""))
+	}
+	if r.LabTTFB != "" {
+		checks = append(checks, lighthouseCheck("Lab TTFB", CheckPass, "low",
+			fmt.Sprintf("Lighthouse mobile TTFB (server response) %s. Simulated lab metric, not a Core Web Vital. Last checked %s.", r.LabTTFB, checked),
+			""))
+	}
+
+	if len(r.Opportunities) > 0 {
+		parts := make([]string, 0, len(r.Opportunities))
+		for _, o := range r.Opportunities {
+			line := o.Title
+			if o.Display != "" {
+				line += " (" + o.Display + ")"
+			} else if o.SavingsMs > 0 {
+				line += fmt.Sprintf(" (~%dms)", o.SavingsMs)
+			}
+			parts = append(parts, line)
+		}
+		checks = append(checks, lighthouseCheck("Lighthouse opportunities", CheckWarning, "low",
+			"Lab-only savings on this URL (not CWV, not sitewide): "+strings.Join(parts, "; ")+". Last checked "+checked+".",
+			"These are Lighthouse estimates from one simulated mobile run."))
+	}
+
+	if r.DesktopError != "" && r.DesktopPerformance == nil {
+		checks = append(checks, lighthouseCheck("Lighthouse desktop", CheckWarning, "low",
+			fmt.Sprintf("Desktop PageSpeed Insights unavailable: %s. Last checked %s.", r.DesktopError, checked),
+			"Mobile lab still applies. Desktop is a separate simulated run, not CWV."))
+	} else if r.DesktopPerformance != nil {
+		n := *r.DesktopPerformance
+		st, sev := CheckPass, "low"
+		switch {
+		case n < 50:
+			st, sev = CheckFail, "medium"
+		case n < 90:
+			st, sev = CheckWarning, "low"
+		}
+		detail := fmt.Sprintf("Lighthouse desktop performance %d/100.", n)
+		if r.DesktopLCP != "" {
+			detail += " Lab LCP " + r.DesktopLCP + "."
+		}
+		if r.DesktopFCP != "" {
+			detail += " Lab FCP " + r.DesktopFCP + "."
+		}
+		if r.DesktopTTFB != "" {
+			detail += " Lab TTFB " + r.DesktopTTFB + "."
+		}
+		detail += " Desktop lab is simulated, not Core Web Vitals. Last checked " + checked + "."
+		checks = append(checks, lighthouseCheck("Lighthouse desktop", st, sev, detail, ""))
+	}
+
+	if len(checks) == 0 {
+		msg := "No Lighthouse lab result for this URL."
+		if r.Error != "" {
+			msg = "PageSpeed lab unavailable: " + r.Error + "."
+		}
+		checks = append(checks, lighthouseCheck("Lighthouse performance", CheckWarning, "low",
+			msg+" Lab is simulated, not Core Web Vitals. Last checked "+checked+".", ""))
 	}
 	return checks
+}
+
+func lighthouseCheck(label, status, severity, detail, rec string) AuditCheck {
+	return AuditCheck{
+		Category:       lighthouseCategory,
+		Label:          label,
+		Status:         status,
+		Severity:       severity,
+		Detail:         detail,
+		Recommendation: rec,
+	}
 }
 
 func metricCheck(label string, m *CWVMetric, checked string) AuditCheck {

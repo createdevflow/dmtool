@@ -67,6 +67,7 @@ func Init(databaseURL string, isDev bool) *gorm.DB {
 			&models.Task{},
 			&models.SEOIssue{},
 			&models.KeywordResult{},
+			&models.GSCBreakdown{},
 			&models.Plan{},
 			&models.Subscription{},
 			&models.UserPreference{},

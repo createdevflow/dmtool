@@ -103,6 +103,14 @@ export default function RankTrackingPage() {
   const visibility = Math.round(data?.visibility ?? 0);
   const isGSC = data?.gsc_connected ?? false;
   const hasRanks = (data?.total ?? 0) > 0;
+  const pages = data?.pages ?? [];
+  const countries = data?.countries ?? [];
+  const devices = data?.devices ?? [];
+  const appearance = data?.search_appearance ?? [];
+  const windowLabel =
+    data?.window?.start && data?.window?.end
+      ? `GSC ${data.window.start} → ${data.window.end} (3-day lag)`
+      : "From the last Search Console sync";
 
   return (
     <div className="space-y-10 max-w-7xl mx-auto pb-32 pt-4">
@@ -212,6 +220,40 @@ export default function RankTrackingPage() {
         </>
       )}
 
+      {isGSC && (
+        <div className="space-y-6">
+          <p className="text-xs font-medium text-slate-400">{windowLabel}</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <GSCBreakdownTable
+              title="Top pages"
+              hint="Landing pages by clicks. Not a sitewide crawl."
+              empty="No page rows yet. Click Refresh Rankings after Search Console has data."
+              rows={pages}
+            />
+            <GSCBreakdownTable
+              title="Devices"
+              hint="Desktop, mobile, and tablet from GSC."
+              empty="No device split yet."
+              rows={devices}
+            />
+          </div>
+          <GSCBreakdownTable
+            title="Countries"
+            hint="ISO country of the searcher, from GSC."
+            empty="No country rows yet."
+            rows={countries}
+          />
+          {appearance.length > 0 && (
+            <GSCBreakdownTable
+              title="Search appearance"
+              hint="How the result appeared (rich results, etc.). Only listed when GSC returns rows."
+              empty=""
+              rows={appearance}
+            />
+          )}
+        </div>
+      )}
+
       {/* Keywords Table */}
       <Card className="border-slate-100 shadow-none rounded-2xl overflow-hidden">
         <CardHeader className="px-8 pt-8 pb-4 flex flex-row items-center justify-between gap-4">
@@ -299,5 +341,76 @@ export default function RankTrackingPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function formatGscNum(n: unknown): string {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return v.toLocaleString();
+}
+
+function formatGscPct(n: unknown): string {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return `${v.toFixed(1)}%`;
+}
+
+function formatGscPos(n: unknown): string {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return "—";
+  return v.toFixed(1);
+}
+
+function GSCBreakdownTable({
+  title,
+  hint,
+  empty,
+  rows,
+}: {
+  title: string;
+  hint: string;
+  empty: string;
+  rows: any[];
+}) {
+  return (
+    <Card className="border-slate-100 shadow-none rounded-2xl overflow-hidden">
+      <CardHeader className="px-8 pt-8 pb-4">
+        <CardTitle className="text-base font-semibold">{title}</CardTitle>
+        <p className="text-xs text-slate-400 mt-1">{hint}</p>
+      </CardHeader>
+      <CardContent className="px-0 pb-0">
+        {rows.length === 0 ? (
+          <p className="px-8 pb-8 text-sm text-slate-500">{empty}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-t border-slate-50">
+                  <th className="text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest px-8 py-3">Name</th>
+                  <th className="text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">Clicks</th>
+                  <th className="text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">Impressions</th>
+                  <th className="text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">CTR</th>
+                  <th className="text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest px-8 py-3">Avg pos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row: any, i: number) => (
+                  <tr key={`${row.key ?? i}`} className="border-t border-slate-50 hover:bg-slate-50/50">
+                    <td className="px-8 py-3 font-medium text-slate-900 max-w-xs truncate" title={row.key}>
+                      {row.label || row.key}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">{formatGscNum(row.clicks)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{formatGscNum(row.impressions)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{formatGscPct(row.ctr_pct)}</td>
+                    <td className="px-8 py-3 text-right tabular-nums">{formatGscPos(row.position)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

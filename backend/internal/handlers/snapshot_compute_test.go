@@ -123,8 +123,12 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 
 	web := labels(payload.WebsiteStats)
 	if !containsAll(web, "SEO Health", "Organic Traffic", "Search Impressions", "Click-Through Rate",
-		"Ranked Keywords", "Top 3 Keywords", "Page 1 Keywords", "Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals") {
+		"Ranked Keywords", "Top 3 Keywords", "Page 1 Keywords", "Top Page", "Top Country", "Mobile Traffic",
+		"Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals") {
 		t.Fatalf("website labels=%v", web)
+	}
+	if got := valueFor(payload.WebsiteStats, "Top Page"); got != "—" {
+		t.Fatalf("Top Page=%q want — (no GSC breakdowns)", got)
 	}
 	if contains(web, "Growth Index") || contains(web, "Content Score") {
 		t.Fatalf("unexpected computed tiles in website: %v", web)
@@ -162,6 +166,67 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	}
 	if !contains(comb, "Core Web Vitals") {
 		t.Fatalf("combined missing Core Web Vitals: %v", comb)
+	}
+	if !contains(comb, "Top Page") || !contains(comb, "Mobile Traffic") {
+		t.Fatalf("combined missing GSC extras: %v", comb)
+	}
+}
+
+func TestSnapshot_GSCBreakdownTiles(t *testing.T) {
+	database := honestyDB(t)
+	u, p := honestyUserProject(t, database)
+	if err := database.Create(&models.Metric{
+		ProjectID: p.ID, Date: time.Now().Format("2006-01-02"), Clicks: 5, Impressions: 50, Source: models.MetricSourceGSC,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	rows := []models.GSCBreakdown{
+		{ProjectID: p.ID, Dimension: models.GSCDimPage, Key: "https://example.com/pricing", Clicks: 20, Impressions: 100, CTR: 0.2, Position: 3, StartDate: "2026-09-03", EndDate: "2026-10-03", FetchedAt: now},
+		{ProjectID: p.ID, Dimension: models.GSCDimPage, Key: "https://example.com/", Clicks: 8, Impressions: 40, FetchedAt: now},
+		{ProjectID: p.ID, Dimension: models.GSCDimCountry, Key: "usa", Clicks: 18, Impressions: 80, FetchedAt: now},
+		{ProjectID: p.ID, Dimension: models.GSCDimDevice, Key: "MOBILE", Clicks: 15, Impressions: 70, FetchedAt: now},
+		{ProjectID: p.ID, Dimension: models.GSCDimDevice, Key: "DESKTOP", Clicks: 5, Impressions: 30, FetchedAt: now},
+	}
+	if err := database.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewDashboardHandler(
+		repository.NewProjectRepository(database),
+		repository.NewMetricRepository(database),
+		repository.NewInsightRepository(database),
+		repository.NewSEORepository(database),
+		repository.NewTaskRepository(database),
+	)
+	r := gin.New()
+	r.GET("/dashboard/snapshot", withUser(u.ID, h.Snapshot))
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/snapshot?project_id="+strconv.FormatUint(uint64(p.ID), 10), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		WebsiteStats []map[string]any `json:"websiteStats"`
+	}
+	if err := json.Unmarshal(decodeData(t, w.Body.Bytes()), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := valueFor(payload.WebsiteStats, "Top Page"); got != "/pricing" {
+		t.Fatalf("Top Page=%q want /pricing", got)
+	}
+	if got := changeFor(payload.WebsiteStats, "Top Page"); got != "20 clicks" {
+		t.Fatalf("Top Page change=%q want 20 clicks (non-numeric trend)", got)
+	}
+	if got := valueFor(payload.WebsiteStats, "Top Country"); got != "United States" {
+		t.Fatalf("Top Country=%q", got)
+	}
+	if got := valueFor(payload.WebsiteStats, "Mobile Traffic"); got != "75.0%" {
+		t.Fatalf("Mobile Traffic=%q want 75.0%%", got)
+	}
+	if got := changeFor(payload.WebsiteStats, "Mobile Traffic"); got != "GSC devices" {
+		t.Fatalf("Mobile Traffic change=%q", got)
 	}
 }
 
@@ -255,9 +320,17 @@ func labels(stats []map[string]any) []string {
 }
 
 func valueFor(stats []map[string]any, label string) string {
+	return fieldFor(stats, label, "value")
+}
+
+func changeFor(stats []map[string]any, label string) string {
+	return fieldFor(stats, label, "change")
+}
+
+func fieldFor(stats []map[string]any, label, field string) string {
 	for _, s := range stats {
 		if s["label"] == label {
-			if v, ok := s["value"].(string); ok {
+			if v, ok := s[field].(string); ok {
 				return v
 			}
 		}

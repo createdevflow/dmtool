@@ -69,6 +69,21 @@ func skipped() gin.H {
 	return gin.H{"status": "skipped", "records": 0}
 }
 
+func persistGSCBreakdowns(repo repository.SEORepository, projectID uint, set services.GSCBreakdownSet) int {
+	if repo == nil {
+		return 0
+	}
+	n := 0
+	for _, batch := range set.FetchedBatches() {
+		if err := repo.ReplaceDimension(projectID, batch.Dimension, batch.Rows); err != nil {
+			log.Printf("[sync] persist GSC %s for project %d: %v", batch.Dimension, projectID, err)
+			continue
+		}
+		n += len(batch.Rows)
+	}
+	return n
+}
+
 func (h *SyncHandler) persistSocial(sm *models.SocialMetric) bool {
 	if sm == nil || sm.IsSimulated {
 		return false
@@ -155,6 +170,13 @@ func (h *SyncHandler) SyncProject(c *gin.Context) {
 				}
 				result["traffic"] = gin.H{"status": "success", "records": len(metrics)}
 				log.Printf("[sync] GSC traffic: %d records for project %d", len(metrics), project.ID)
+			}
+
+			if set, bErr := h.gscService.FetchBreakdowns(ctx, project.URL, token); bErr != nil {
+				log.Printf("[sync] GSC breakdowns error for project %d: %v", project.ID, bErr)
+			} else {
+				n := persistGSCBreakdowns(h.seoRepo, project.ID, set)
+				log.Printf("[sync] GSC breakdowns: %d rows for project %d", n, project.ID)
 			}
 
 			if h.keywordService != nil {

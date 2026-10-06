@@ -17,6 +17,9 @@ type SEORepository interface {
 
 	UpsertKeywords(results []models.KeywordResult) error
 	FindKeywords(projectID uint, seed string) ([]models.KeywordResult, bool, error)
+
+	ReplaceDimension(projectID uint, dimension string, rows []models.GSCBreakdown) error
+	FindBreakdowns(projectID uint, dimension string) ([]models.GSCBreakdown, error)
 }
 
 type gormSEORepository struct {
@@ -84,4 +87,35 @@ func (r *gormSEORepository) FindKeywords(projectID uint, seed string) ([]models.
 	}
 	fresh := time.Since(results[0].UpdatedAt) < 24*time.Hour
 	return results, fresh, nil
+}
+
+// ReplaceDimension deletes stored GSC rows for one dimension and inserts this fetch.
+// An empty rows slice clears that dimension (successful empty GSC response).
+func (r *gormSEORepository) ReplaceDimension(projectID uint, dimension string, rows []models.GSCBreakdown) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("project_id = ? AND dimension = ?", projectID, dimension).
+			Delete(&models.GSCBreakdown{}).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		for i := range rows {
+			rows[i].ProjectID = projectID
+			rows[i].Dimension = dimension
+		}
+		return tx.Create(&rows).Error
+	})
+}
+
+// FindBreakdowns returns GSC dimension rows, highest clicks first.
+// Empty dimension returns every stored dimension for the project.
+func (r *gormSEORepository) FindBreakdowns(projectID uint, dimension string) ([]models.GSCBreakdown, error) {
+	var rows []models.GSCBreakdown
+	q := r.db.Where("project_id = ?", projectID)
+	if dimension != "" {
+		q = q.Where("dimension = ?", dimension)
+	}
+	err := q.Order("clicks DESC").Find(&rows).Error
+	return rows, err
 }

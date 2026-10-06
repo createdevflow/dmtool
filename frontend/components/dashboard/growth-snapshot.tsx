@@ -9,7 +9,8 @@ const MotionDiv = dynamic(
 import { 
   ArrowUpRight, ArrowDownRight, Activity, Globe, 
   Users, Target, Zap, MousePointer2, TrendingUp,
-  BarChart3, Sparkles, Search, AlertCircle, Eye, UserPlus, FileText, Lock, Gauge
+  BarChart3, Sparkles, Search, AlertCircle, Eye, UserPlus, FileText, Lock, Gauge,
+  Link as LinkIcon, MapPin, Smartphone
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Mode } from "./dashboard-mode-context";
@@ -29,6 +30,7 @@ const iconMap: Record<string, any> = {
   Target, Globe, TrendingUp, MousePointer2,
   Activity, Users, Zap, BarChart3, Sparkles,
   Search, AlertCircle, Eye, UserPlus, FileText, Lock, Gauge,
+  Link: LinkIcon, MapPin, Smartphone,
 };
 
 // Fallback stats shown while API data loads. trend is "flat" (never
@@ -42,6 +44,9 @@ const fallbackWebsite = [
   { label: "Ranked Keywords", value: "—", change: "—", trend: "flat", icon: Search },
   { label: "Top 3 Keywords", value: "—", change: "—", trend: "flat", icon: Search },
   { label: "Page 1 Keywords", value: "—", change: "—", trend: "flat", icon: Search },
+  { label: "Top Page", value: "—", change: "—", trend: "flat", icon: LinkIcon },
+  { label: "Top Country", value: "—", change: "—", trend: "flat", icon: MapPin },
+  { label: "Mobile Traffic", value: "—", change: "—", trend: "flat", icon: Smartphone },
   { label: "Open SEO Issues", value: "—", change: "—", trend: "flat", icon: AlertCircle },
   { label: "robots.txt", value: "—", change: "—", trend: "flat", icon: FileText },
   { label: "HTTPS", value: "—", change: "—", trend: "flat", icon: Lock },
@@ -64,6 +69,8 @@ const fallbackCombined = [
   { label: "Open SEO Issues", value: "—", change: "—", trend: "flat", icon: AlertCircle },
   { label: "Ranked Keywords", value: "—", change: "—", trend: "flat", icon: Search },
   { label: "Top 3 Keywords", value: "—", change: "—", trend: "flat", icon: Search },
+  { label: "Top Page", value: "—", change: "—", trend: "flat", icon: LinkIcon },
+  { label: "Mobile Traffic", value: "—", change: "—", trend: "flat", icon: Smartphone },
   { label: "robots.txt", value: "—", change: "—", trend: "flat", icon: FileText },
   { label: "HTTPS", value: "—", change: "—", trend: "flat", icon: Lock },
   { label: "Core Web Vitals", value: "—", change: "—", trend: "flat", icon: Gauge },

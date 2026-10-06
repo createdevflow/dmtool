@@ -121,7 +121,7 @@ func main() {
 	}
 
 	// ── 5. Start background workers ─────────────────────────────────────────
-	go workers.StartMetricsSyncer(database, projectRepo, metricRepo, oauthRepo, gscService, metaService, encKey, cfg)
+	go workers.StartMetricsSyncer(database, projectRepo, metricRepo, oauthRepo, seoRepo, gscService, metaService, encKey, cfg)
 	go workers.StartCalendarPublisher(taskRepo, projectRepo, oauthRepo, metaService, linkedinService, encKey, cfg)
 	go workers.StartHealthScorer(projectRepo, crawlerService)
 	go workers.StartInsightGenerator(database, projectRepo, metricRepo, insightRepo, openaiService, cfg)

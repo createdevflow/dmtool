@@ -24,6 +24,7 @@ func StartMetricsSyncer(
 	projectRepo repository.ProjectRepository,
 	metricRepo repository.MetricRepository,
 	oauthRepo repository.OAuthRepository,
+	seoRepo repository.SEORepository,
 	gsc services.GSCService,
 	meta services.MetaService,
 	encKey []byte,
@@ -34,10 +35,10 @@ func StartMetricsSyncer(
 	defer ticker.Stop()
 
 	// Run immediately on startup
-	runMetricsSyncer(db, projectRepo, metricRepo, oauthRepo, gsc, meta, encKey, cfg)
+	runMetricsSyncer(db, projectRepo, metricRepo, oauthRepo, seoRepo, gsc, meta, encKey, cfg)
 
 	for range ticker.C {
-		runMetricsSyncer(db, projectRepo, metricRepo, oauthRepo, gsc, meta, encKey, cfg)
+		runMetricsSyncer(db, projectRepo, metricRepo, oauthRepo, seoRepo, gsc, meta, encKey, cfg)
 	}
 }
 
@@ -46,6 +47,7 @@ func runMetricsSyncer(
 	projectRepo repository.ProjectRepository,
 	metricRepo repository.MetricRepository,
 	oauthRepo repository.OAuthRepository,
+	seoRepo repository.SEORepository,
 	gsc services.GSCService,
 	meta services.MetaService,
 	encKey []byte,
@@ -65,17 +67,18 @@ func runMetricsSyncer(
 		googleCred, err := oauthRepo.FindByUserAndProvider(project.UserID, "google")
 		if err == nil && googleCred != nil {
 			log.Printf("[worker:MetricsSyncer] syncing GSC for project %d (%s)", project.ID, project.URL)
-			
+
 			accessToken, err1 := utils.Decrypt(googleCred.AccessTokenEnc, encKey)
 			refreshToken, err2 := utils.Decrypt(googleCred.RefreshTokenEnc, encKey)
-			
+
 			if err1 == nil && err2 == nil {
 				token := &oauth2.Token{
 					AccessToken:  accessToken,
 					RefreshToken: refreshToken,
 					Expiry:       googleCred.ExpiresAt,
 				}
-				metrics, err := gsc.FetchMetrics(context.Background(), project.URL, token)
+				ctx := context.Background()
+				metrics, err := gsc.FetchMetrics(ctx, project.URL, token)
 				if err == nil {
 					for _, m := range metrics {
 						m.ProjectID = project.ID
@@ -83,6 +86,15 @@ func runMetricsSyncer(
 					}
 				} else {
 					log.Printf("[worker:MetricsSyncer] GSC sync error: %v", err)
+				}
+				if set, bErr := gsc.FetchBreakdowns(ctx, project.URL, token); bErr != nil {
+					log.Printf("[worker:MetricsSyncer] GSC breakdowns error: %v", bErr)
+				} else if seoRepo != nil {
+					for _, batch := range set.FetchedBatches() {
+						if err := seoRepo.ReplaceDimension(project.ID, batch.Dimension, batch.Rows); err != nil {
+							log.Printf("[worker:MetricsSyncer] persist GSC %s: %v", batch.Dimension, err)
+						}
+					}
 				}
 			}
 		}
@@ -160,4 +172,3 @@ func runMetricsSyncer(
 
 	log.Println("[worker:MetricsSyncer] sync cycle completed")
 }
-

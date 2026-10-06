@@ -529,6 +529,22 @@ func (h *SEOHandler) RankTracking(c *gin.Context) {
 		}
 	}
 
+	pages, countries, devices, appearance := []models.GSCBreakdown{}, []models.GSCBreakdown{}, []models.GSCBreakdown{}, []models.GSCBreakdown{}
+	windowStart, windowEnd := "", ""
+	if isGSCConnected {
+		pages, _ = h.seoRepo.FindBreakdowns(pid, models.GSCDimPage)
+		countries, _ = h.seoRepo.FindBreakdowns(pid, models.GSCDimCountry)
+		devices, _ = h.seoRepo.FindBreakdowns(pid, models.GSCDimDevice)
+		appearance, _ = h.seoRepo.FindBreakdowns(pid, models.GSCDimSearchAppearance)
+		if len(pages) > 0 {
+			windowStart, windowEnd = pages[0].StartDate, pages[0].EndDate
+		} else if len(devices) > 0 {
+			windowStart, windowEnd = devices[0].StartDate, devices[0].EndDate
+		} else if len(countries) > 0 {
+			windowStart, windowEnd = countries[0].StartDate, countries[0].EndDate
+		}
+	}
+
 	utils.Success(c, gin.H{
 		"keywords":      ranked,
 		"total":         len(ranked),
@@ -540,6 +556,14 @@ func (h *SEOHandler) RankTracking(c *gin.Context) {
 			"top10":  top10,
 			"top30":  top30,
 			"beyond": beyond,
+		},
+		"pages":             gscBreakdownJSON(pages, displayPageKey),
+		"countries":         gscBreakdownJSON(countries, displayCountryKey),
+		"devices":           gscBreakdownJSON(devices, displayDeviceKey),
+		"search_appearance": gscBreakdownJSON(appearance, displayAppearanceKey),
+		"window": gin.H{
+			"start": windowStart,
+			"end":   windowEnd,
 		},
 		"last_updated": project.UpdatedAt.Format(time.RFC3339),
 	}, nil)

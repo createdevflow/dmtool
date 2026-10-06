@@ -37,7 +37,7 @@ func TestPhase1MigrationsSQLite(t *testing.T) {
 
 	migrator := database.Migrator()
 
-	for _, want := range []string{"plans", "subscriptions", "user_preferences", "admin_audit_logs", "permissions", "roles"} {
+	for _, want := range []string{"plans", "subscriptions", "user_preferences", "admin_audit_logs", "permissions", "roles", "gsc_breakdowns"} {
 		if !migrator.HasTable(want) {
 			t.Errorf("expected table %q to exist after RunMigrations", want)
 		}

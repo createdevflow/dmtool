@@ -43,6 +43,7 @@ func RunMigrations(database *gorm.DB) error {
 		&models.Permission{},
 		&models.Role{},
 		&models.RolePermission{},
+		&models.GSCBreakdown{},
 	}
 
 	migrator := database.Migrator()

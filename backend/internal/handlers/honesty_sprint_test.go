@@ -279,6 +279,9 @@ func TestHonesty_RankTrackingIgnoresPositionZero(t *testing.T) {
 	if total, _ := noGSC["total"].(float64); total != 0 {
 		t.Errorf("without GSC total=%v want 0", noGSC["total"])
 	}
+	if pages, _ := noGSC["pages"].([]any); len(pages) != 0 {
+		t.Errorf("without GSC pages=%v want empty", noGSC["pages"])
+	}
 	buckets, _ := noGSC["buckets"].(map[string]any)
 	if buckets["top3"].(float64) != 0 {
 		t.Errorf("without GSC top3=%v want 0 (position 0 must not invent top-3)", buckets["top3"])
@@ -297,6 +300,12 @@ func TestHonesty_RankTrackingIgnoresPositionZero(t *testing.T) {
 	if withGSC["gsc_connected"] != true {
 		t.Errorf("gsc_connected=%v want true", withGSC["gsc_connected"])
 	}
+	if _, ok := withGSC["pages"]; !ok {
+		t.Error("pages field missing when GSC is connected")
+	}
+	if pages, _ := withGSC["pages"].([]any); len(pages) != 0 {
+		t.Errorf("with GSC but no breakdowns pages=%v want empty", pages)
+	}
 	if total, _ := withGSC["total"].(float64); total != 1 {
 		t.Errorf("with GSC total=%v want 1 (only position>0)", withGSC["total"])
 	}
@@ -310,6 +319,30 @@ func TestHonesty_RankTrackingIgnoresPositionZero(t *testing.T) {
 		if kw["position"].(float64) <= 0 {
 			t.Errorf("ranked list included position<=0: %+v", kw)
 		}
+	}
+
+	if err := database.Create(&models.GSCBreakdown{
+		ProjectID: p.ID, Dimension: models.GSCDimPage, Key: "https://example.com/pricing",
+		Clicks: 7, Impressions: 50, CTR: 0.14, Position: 4.2,
+		StartDate: "2026-09-03", EndDate: "2026-10-03", FetchedAt: time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("create breakdown: %v", err)
+	}
+	_, withRows := get()
+	pages, _ := withRows["pages"].([]any)
+	if len(pages) != 1 {
+		t.Fatalf("pages=%v want 1 stored GSC row", withRows["pages"])
+	}
+	row, _ := pages[0].(map[string]any)
+	if row["label"] != "/pricing" {
+		t.Errorf("page label=%v want /pricing", row["label"])
+	}
+	if row["ctr_pct"].(float64) < 13.9 || row["ctr_pct"].(float64) > 14.1 {
+		t.Errorf("ctr_pct=%v want 14", row["ctr_pct"])
+	}
+	win, _ := withRows["window"].(map[string]any)
+	if win["start"] != "2026-09-03" || win["end"] != "2026-10-03" {
+		t.Errorf("window=%v", win)
 	}
 }
 

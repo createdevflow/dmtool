@@ -100,7 +100,10 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 	keywords, _, _ := h.seoRepo.FindKeywords(pid, "")
 	ranked, top3, page1 := keywordPositionBuckets(keywords)
 	openIssueCount := len(issues)
-	hasGSC := trafficSource != ""
+	pages, _ := h.seoRepo.FindBreakdowns(pid, models.GSCDimPage)
+	countries, _ := h.seoRepo.FindBreakdowns(pid, models.GSCDimCountry)
+	devices, _ := h.seoRepo.FindBreakdowns(pid, models.GSCDimDevice)
+	hasGSC := trafficSource != "" || ranked > 0 || len(pages)+len(countries)+len(devices) > 0
 
 	websiteStats := []gin.H{
 		{
@@ -134,6 +137,9 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		rankedKeywordStat("Ranked Keywords", ranked, hasGSC),
 		rankedKeywordStat("Top 3 Keywords", top3, hasGSC),
 		rankedKeywordStat("Page 1 Keywords", page1, hasGSC),
+		gscTopPageStat(pages, hasGSC),
+		gscTopCountryStat(countries, hasGSC),
+		gscMobileShareStat(devices, hasGSC),
 		{
 			"label":  "Open SEO Issues",
 			"value":  strconv.Itoa(openIssueCount),
@@ -228,6 +234,8 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		},
 		rankedKeywordStat("Ranked Keywords", ranked, hasGSC),
 		rankedKeywordStat("Top 3 Keywords", top3, hasGSC),
+		gscTopPageStat(pages, hasGSC),
+		gscMobileShareStat(devices, hasGSC),
 		robotsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		httpsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		cwvOverviewStat(issues, project.HealthScore, project.UpdatedAt),

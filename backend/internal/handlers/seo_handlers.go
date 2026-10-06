@@ -108,6 +108,7 @@ func (h *SEOHandler) AuditRun(c *gin.Context) {
 		"https":        result.HTTPS,
 		"cwv":          result.CWV,
 		"sitemap":      result.Sitemap,
+		"indexability": result.Indexability,
 		"issues_found": issuesSummary,
 	}, nil)
 }
@@ -331,6 +332,7 @@ func (h *SEOHandler) GetAuditStatus(c *gin.Context) {
 		"https":        httpsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 		"cwv":          cwvStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 		"sitemap":      sitemapStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"indexability": indexabilityStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 	}, nil)
 }
 
@@ -351,14 +353,15 @@ func (h *SEOHandler) PublicAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"url":        result.URL,
-			"score":      result.Score,
-			"checks":     result.Checks,
-			"crawled_at": result.CrawledAt,
-			"robots":     result.Robots,
-			"https":      result.HTTPS,
-			"cwv":        result.CWV,
-			"sitemap":    result.Sitemap,
+			"url":          result.URL,
+			"score":        result.Score,
+			"checks":       result.Checks,
+			"crawled_at":   result.CrawledAt,
+			"robots":       result.Robots,
+			"https":        result.HTTPS,
+			"cwv":          result.CWV,
+			"sitemap":      result.Sitemap,
+			"indexability": result.Indexability,
 		},
 	})
 }
@@ -405,6 +408,10 @@ func cwvStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time
 
 func sitemapStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
 	return categoryStatusFromIssues(issues, "sitemap", healthScore, updated)
+}
+
+func indexabilityStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryStatusFromIssues(issues, "indexability", healthScore, updated)
 }
 
 func categoryStatusFromIssues(issues []models.SEOIssue, category string, healthScore int, updated time.Time) gin.H {

@@ -124,7 +124,7 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	web := labels(payload.WebsiteStats)
 	if !containsAll(web, "SEO Health", "Organic Traffic", "Search Impressions", "Click-Through Rate",
 		"Ranked Keywords", "Top 3 Keywords", "Page 1 Keywords", "Top Page", "Top Country", "Mobile Traffic",
-		"Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals", "XML Sitemap") {
+		"Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals", "XML Sitemap", "Indexability") {
 		t.Fatalf("website labels=%v", web)
 	}
 	if got := valueFor(payload.WebsiteStats, "Top Page"); got != "—" {
@@ -169,6 +169,9 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	}
 	if !contains(comb, "XML Sitemap") {
 		t.Fatalf("combined missing XML Sitemap: %v", comb)
+	}
+	if !contains(comb, "Indexability") {
+		t.Fatalf("combined missing Indexability: %v", comb)
 	}
 	if !contains(comb, "Top Page") || !contains(comb, "Mobile Traffic") {
 		t.Fatalf("combined missing GSC extras: %v", comb)
@@ -333,6 +336,30 @@ func TestSitemapStatusFromIssues(t *testing.T) {
 	}, 70, updated)
 	if ignoreRobots["label"] != "Pass" {
 		t.Fatalf("robots fail should not mark sitemap fail, got %+v", ignoreRobots)
+	}
+}
+
+func TestIndexabilityStatusFromIssues(t *testing.T) {
+	updated := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	unknown := indexabilityStatusFromIssues(nil, 0, updated)
+	if unknown["status"] != "unknown" {
+		t.Fatalf("no audit want unknown, got %+v", unknown)
+	}
+	pass := indexabilityStatusFromIssues(nil, 70, updated)
+	if pass["label"] != "Pass" {
+		t.Fatalf("audited with no indexability issues want Pass, got %+v", pass)
+	}
+	fail := indexabilityStatusFromIssues([]models.SEOIssue{
+		{Category: "indexability", Severity: models.SeverityHigh, Detail: "noindex"},
+	}, 40, updated)
+	if fail["label"] != "Fail" {
+		t.Fatalf("want Fail, got %+v", fail)
+	}
+	ignoreSitemap := indexabilityStatusFromIssues([]models.SEOIssue{
+		{Category: "sitemap", Severity: models.SeverityHigh, Detail: "404"},
+	}, 70, updated)
+	if ignoreSitemap["label"] != "Pass" {
+		t.Fatalf("sitemap fail should not mark indexability fail, got %+v", ignoreSitemap)
 	}
 }
 

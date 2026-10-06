@@ -10,7 +10,7 @@ import {
   ArrowUpRight, ArrowDownRight, Activity, Globe, 
   Users, Target, Zap, MousePointer2, TrendingUp,
   BarChart3, Sparkles, Search, AlertCircle, Eye, UserPlus, FileText, Lock, Gauge,
-  Link as LinkIcon, MapPin, Smartphone, ListTree
+  Link as LinkIcon, MapPin, Smartphone, ListTree, ScanSearch
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Mode } from "./dashboard-mode-context";
@@ -30,7 +30,7 @@ const iconMap: Record<string, any> = {
   Target, Globe, TrendingUp, MousePointer2,
   Activity, Users, Zap, BarChart3, Sparkles,
   Search, AlertCircle, Eye, UserPlus, FileText, Lock, Gauge,
-  Link: LinkIcon, MapPin, Smartphone, ListTree,
+  Link: LinkIcon, MapPin, Smartphone, ListTree, ScanSearch,
 };
 
 // Fallback stats shown while API data loads. trend is "flat" (never
@@ -52,6 +52,7 @@ const fallbackWebsite = [
   { label: "HTTPS", value: "—", change: "—", trend: "flat", icon: Lock },
   { label: "Core Web Vitals", value: "—", change: "—", trend: "flat", icon: Gauge },
   { label: "XML Sitemap", value: "—", change: "—", trend: "flat", icon: ListTree },
+  { label: "Indexability", value: "—", change: "—", trend: "flat", icon: ScanSearch },
 ];
 const fallbackSocial = [
   { label: "Total Followers", value: "—", change: "—", trend: "flat", icon: Users },
@@ -76,6 +77,7 @@ const fallbackCombined = [
   { label: "HTTPS", value: "—", change: "—", trend: "flat", icon: Lock },
   { label: "Core Web Vitals", value: "—", change: "—", trend: "flat", icon: Gauge },
   { label: "XML Sitemap", value: "—", change: "—", trend: "flat", icon: ListTree },
+  { label: "Indexability", value: "—", change: "—", trend: "flat", icon: ScanSearch },
 ];
 
 function mapStats(raw?: any[]) {

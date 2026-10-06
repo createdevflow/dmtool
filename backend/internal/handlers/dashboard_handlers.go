@@ -151,6 +151,7 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		httpsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		cwvOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		sitemapOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		indexabilityOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 	}
 
 	// 5. Social metrics from DB (live rows only)
@@ -241,6 +242,7 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		httpsOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		cwvOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		sitemapOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		indexabilityOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 	}
 
 	utils.Success(c, gin.H{
@@ -541,6 +543,10 @@ func cwvOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Tim
 
 func sitemapOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
 	return categoryOverviewStat(sitemapStatusFromIssues(issues, healthScore, updated), "XML Sitemap", "ListTree")
+}
+
+func indexabilityOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryOverviewStat(indexabilityStatusFromIssues(issues, healthScore, updated), "Indexability", "ScanSearch")
 }
 
 func categoryOverviewStat(info gin.H, tileLabel, icon string) gin.H {

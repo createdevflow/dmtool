@@ -34,15 +34,16 @@ type AuditCheck struct {
 
 // AuditResult is the full output of a crawl.
 type AuditResult struct {
-	URL        string        `json:"url"`
-	Score      int           `json:"score"` // 0-100
-	Checks     []AuditCheck  `json:"checks"`
-	CrawledAt  time.Time     `json:"crawled_at"`
-	LoadTimeMs int64         `json:"load_time_ms"`
-	Robots     RobotsReport  `json:"robots"`
-	HTTPS      HTTPSReport   `json:"https"`
-	CWV        CWVReport     `json:"cwv"`
-	Sitemap    SitemapReport `json:"sitemap"`
+	URL          string             `json:"url"`
+	Score        int                `json:"score"` // 0-100
+	Checks       []AuditCheck       `json:"checks"`
+	CrawledAt    time.Time          `json:"crawled_at"`
+	LoadTimeMs   int64              `json:"load_time_ms"`
+	Robots       RobotsReport       `json:"robots"`
+	HTTPS        HTTPSReport        `json:"https"`
+	CWV          CWVReport          `json:"cwv"`
+	Sitemap      SitemapReport      `json:"sitemap"`
+	Indexability IndexabilityReport `json:"indexability"`
 }
 
 // SEOCrawlerService crawls a URL and returns a structured AuditResult.
@@ -134,7 +135,6 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 	ogTitle := extractMetaProperty(doc, "og:title")
 	ogDesc := extractMetaProperty(doc, "og:description")
 	ogImage := extractMetaProperty(doc, "og:image")
-	canonical := extractLinkHref(doc, "canonical")
 	viewport := extractMetaContent(doc, "viewport")
 	hasStructuredData := strings.Contains(bodyStr, `"@type"`) || strings.Contains(bodyStr, `application/ld+json`)
 	imagesMissingAlt := countImagesMissingAlt(doc)
@@ -164,6 +164,10 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 	httpsReport, httpsChecks := InspectHTTPS(c.client, finalURL, doc, resp.Header, result.CrawledAt)
 	result.HTTPS = httpsReport
 	result.Checks = append(result.Checks, httpsChecks...)
+
+	idxReport, idxChecks := InspectIndexability(finalURL, doc, resp.Header, result.CrawledAt)
+	result.Indexability = idxReport
+	result.Checks = append(result.Checks, idxChecks...)
 
 	// Check: HTTP Status Code
 	if resp.StatusCode == 200 {
@@ -318,23 +322,6 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 			Status: CheckFail, Severity: "medium",
 			Detail:         "No Open Graph tags found.",
 			Recommendation: "Add og:title, og:description, and og:image meta tags for rich social media previews.",
-		})
-	}
-
-	// Check: Canonical Tag
-	if canonical != "" {
-		result.Checks = append(result.Checks, AuditCheck{
-			Category: "technical", Label: "Canonical Tag",
-			Status: CheckPass, Severity: "medium",
-			Detail:         fmt.Sprintf("Canonical URL: %s", canonical),
-			Recommendation: "",
-		})
-	} else {
-		result.Checks = append(result.Checks, AuditCheck{
-			Category: "technical", Label: "Canonical Tag",
-			Status: CheckWarning, Severity: "medium",
-			Detail:         "No canonical tag found.",
-			Recommendation: "Add <link rel=\"canonical\" href=\"...\"> to prevent duplicate content issues.",
 		})
 	}
 

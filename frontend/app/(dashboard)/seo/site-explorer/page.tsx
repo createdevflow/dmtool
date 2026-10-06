@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Search, ShieldCheck, AlertCircle,
   Zap, Loader2, CheckCircle2, RefreshCw,
-  ExternalLink, Clock, AlertTriangle, Info, FileText, Lock, Gauge, ListTree,
+  ExternalLink, Clock, AlertTriangle, Info, FileText, Lock, Gauge, ListTree, ScanSearch,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { dashboardApi } from "@/lib/api-client";
@@ -154,6 +154,29 @@ function sitemapSummary(sm: any): string {
     parts.push(`Sample: ${sm.sample.join(", ")}.`);
   }
   parts.push("Listed URLs are not crawled. This is not a sitewide inventory.");
+  return parts.join(" ");
+}
+
+function indexabilityHeadline(idx: any): string {
+  if (idx?.noindex) return "noindex";
+  if (idx?.indexable) return "Indexable";
+  if (idx?.label) return idx.label;
+  if (idx?.status === "pass") return "Indexable";
+  if (idx?.status === "fail") return "Blocked";
+  if (idx?.status === "warning") return "Warning";
+  return "Not checked";
+}
+
+function indexabilitySummary(idx: any): string {
+  const parts: string[] = [];
+  if (idx?.meta_robots) parts.push(`Meta robots: ${idx.meta_robots}.`);
+  else parts.push("No meta robots tag (default is index).");
+  if (idx?.x_robots_tag) parts.push(`X-Robots-Tag: ${idx.x_robots_tag}.`);
+  else parts.push("No X-Robots-Tag header.");
+  if (idx?.nofollow && !idx?.noindex) parts.push("nofollow is set; the page may still be indexed.");
+  if (idx?.canonical) parts.push(`Canonical: ${idx.canonical}.`);
+  else parts.push("No canonical tag on this page.");
+  parts.push("Checked this page only — not a sitewide indexability crawl.");
   return parts.join(" ");
 }
 
@@ -324,7 +347,7 @@ export default function SiteExplorerPage() {
         </div>
       </div>
 
-      {(auditResult?.robots || auditResult?.https || auditResult?.cwv || auditResult?.sitemap) && (
+      {(auditResult?.robots || auditResult?.https || auditResult?.cwv || auditResult?.sitemap || auditResult?.indexability) && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
           {auditResult?.robots && (
             <Card className="border-slate-100 rounded-2xl p-6 bg-white">
@@ -424,6 +447,29 @@ export default function SiteExplorerPage() {
                   {(auditResult.sitemap.checked_at || auditResult.crawled_at) && (
                     <p className="text-xs text-slate-400 mt-2">
                       Last checked {new Date(auditResult.sitemap.checked_at || auditResult.crawled_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+          {auditResult?.indexability?.status && (
+            <Card className="border-slate-100 rounded-2xl p-6 bg-white">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+                  <ScanSearch className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Indexability</p>
+                  <p className="text-xl font-semibold text-slate-900 mt-0.5">
+                    {indexabilityHeadline(auditResult.indexability)}
+                  </p>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {indexabilitySummary(auditResult.indexability)}
+                  </p>
+                  {(auditResult.indexability.checked_at || auditResult.crawled_at) && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Last checked {new Date(auditResult.indexability.checked_at || auditResult.crawled_at).toLocaleString()}
                     </p>
                   )}
                 </div>

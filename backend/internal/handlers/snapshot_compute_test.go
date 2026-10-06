@@ -124,7 +124,7 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	web := labels(payload.WebsiteStats)
 	if !containsAll(web, "SEO Health", "Organic Traffic", "Search Impressions", "Click-Through Rate",
 		"Ranked Keywords", "Top 3 Keywords", "Page 1 Keywords", "Top Page", "Top Country", "Mobile Traffic",
-		"Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals") {
+		"Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals", "XML Sitemap") {
 		t.Fatalf("website labels=%v", web)
 	}
 	if got := valueFor(payload.WebsiteStats, "Top Page"); got != "—" {
@@ -166,6 +166,9 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	}
 	if !contains(comb, "Core Web Vitals") {
 		t.Fatalf("combined missing Core Web Vitals: %v", comb)
+	}
+	if !contains(comb, "XML Sitemap") {
+		t.Fatalf("combined missing XML Sitemap: %v", comb)
 	}
 	if !contains(comb, "Top Page") || !contains(comb, "Mobile Traffic") {
 		t.Fatalf("combined missing GSC extras: %v", comb)
@@ -306,6 +309,30 @@ func TestCwvStatusFromIssues(t *testing.T) {
 	}, 70, updated)
 	if ignoreLab["label"] != "Good" {
 		t.Fatalf("lighthouse must not flip CWV tile, got %+v", ignoreLab)
+	}
+}
+
+func TestSitemapStatusFromIssues(t *testing.T) {
+	updated := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	unknown := sitemapStatusFromIssues(nil, 0, updated)
+	if unknown["status"] != "unknown" {
+		t.Fatalf("no audit want unknown, got %+v", unknown)
+	}
+	pass := sitemapStatusFromIssues(nil, 70, updated)
+	if pass["label"] != "Pass" {
+		t.Fatalf("audited with no sitemap issues want Pass, got %+v", pass)
+	}
+	fail := sitemapStatusFromIssues([]models.SEOIssue{
+		{Category: "sitemap", Severity: models.SeverityHigh, Detail: "declared 404"},
+	}, 40, updated)
+	if fail["label"] != "Fail" {
+		t.Fatalf("want Fail, got %+v", fail)
+	}
+	ignoreRobots := sitemapStatusFromIssues([]models.SEOIssue{
+		{Category: "robots", Severity: models.SeverityHigh, Detail: "blocked"},
+	}, 70, updated)
+	if ignoreRobots["label"] != "Pass" {
+		t.Fatalf("robots fail should not mark sitemap fail, got %+v", ignoreRobots)
 	}
 }
 

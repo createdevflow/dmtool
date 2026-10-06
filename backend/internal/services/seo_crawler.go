@@ -34,14 +34,15 @@ type AuditCheck struct {
 
 // AuditResult is the full output of a crawl.
 type AuditResult struct {
-	URL        string       `json:"url"`
-	Score      int          `json:"score"` // 0-100
-	Checks     []AuditCheck `json:"checks"`
-	CrawledAt  time.Time    `json:"crawled_at"`
-	LoadTimeMs int64        `json:"load_time_ms"`
-	Robots     RobotsReport `json:"robots"`
-	HTTPS      HTTPSReport  `json:"https"`
-	CWV        CWVReport    `json:"cwv"`
+	URL        string        `json:"url"`
+	Score      int           `json:"score"` // 0-100
+	Checks     []AuditCheck  `json:"checks"`
+	CrawledAt  time.Time     `json:"crawled_at"`
+	LoadTimeMs int64         `json:"load_time_ms"`
+	Robots     RobotsReport  `json:"robots"`
+	HTTPS      HTTPSReport   `json:"https"`
+	CWV        CWVReport     `json:"cwv"`
+	Sitemap    SitemapReport `json:"sitemap"`
 }
 
 // SEOCrawlerService crawls a URL and returns a structured AuditResult.
@@ -389,54 +390,17 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 	}
 
 	robotsURL := fmt.Sprintf("%s://%s/robots.txt", parsedURL.Scheme, parsedURL.Host)
-	sitemapURL := fmt.Sprintf("%s://%s/sitemap.xml", parsedURL.Scheme, parsedURL.Host)
-
-	var (
-		robotsReport RobotsReport
-		robotsChecks []AuditCheck
-		smResp       *http.Response
-		smErr        error
-	)
-	var fetchWG sync.WaitGroup
-	fetchWG.Add(2)
-	go func() {
-		defer fetchWG.Done()
-		robotsReport, robotsChecks = InspectRobots(c.client, robotsURL, result.CrawledAt)
-	}()
-	go func() {
-		defer fetchWG.Done()
-		smResp, smErr = c.client.Get(sitemapURL)
-	}()
-	fetchWG.Wait()
-
+	robotsReport, robotsChecks := InspectRobots(c.client, robotsURL, result.CrawledAt)
 	result.Robots = robotsReport
 	result.Checks = append(result.Checks, robotsChecks...)
 
-	if smErr == nil && smResp != nil {
-		defer smResp.Body.Close()
-		if smResp.StatusCode == 200 {
-			result.Checks = append(result.Checks, AuditCheck{
-				Category: "technical", Label: "XML Sitemap",
-				Status: CheckPass, Severity: "medium",
-				Detail:         "sitemap.xml found at " + sitemapURL,
-				Recommendation: "",
-			})
-		} else {
-			result.Checks = append(result.Checks, AuditCheck{
-				Category: "technical", Label: "XML Sitemap",
-				Status: CheckWarning, Severity: "medium",
-				Detail:         "sitemap.xml not found.",
-				Recommendation: "Generate and submit an XML sitemap to Google Search Console.",
-			})
-		}
-	} else if smErr != nil {
-		result.Checks = append(result.Checks, AuditCheck{
-			Category: "technical", Label: "XML Sitemap",
-			Status: CheckWarning, Severity: "medium",
-			Detail:         "Could not fetch sitemap.xml: " + smErr.Error(),
-			Recommendation: "Generate and submit an XML sitemap to Google Search Console.",
-		})
+	sitemapOrigin := parsedURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		sitemapOrigin = resp.Request.URL
 	}
+	sitemapReport, sitemapChecks := InspectSitemap(c.client, robotsReport.Sitemaps, sitemapOrigin, result.CrawledAt)
+	result.Sitemap = sitemapReport
+	result.Checks = append(result.Checks, sitemapChecks...)
 
 	cwvWG.Wait()
 	result.CWV = cwvReport

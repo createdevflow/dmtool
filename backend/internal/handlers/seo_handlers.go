@@ -107,6 +107,7 @@ func (h *SEOHandler) AuditRun(c *gin.Context) {
 		"robots":       result.Robots,
 		"https":        result.HTTPS,
 		"cwv":          result.CWV,
+		"sitemap":      result.Sitemap,
 		"issues_found": issuesSummary,
 	}, nil)
 }
@@ -329,6 +330,7 @@ func (h *SEOHandler) GetAuditStatus(c *gin.Context) {
 		"robots":       robotsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 		"https":        httpsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 		"cwv":          cwvStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"sitemap":      sitemapStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 	}, nil)
 }
 
@@ -356,6 +358,7 @@ func (h *SEOHandler) PublicAudit(c *gin.Context) {
 			"robots":     result.Robots,
 			"https":      result.HTTPS,
 			"cwv":        result.CWV,
+			"sitemap":    result.Sitemap,
 		},
 	})
 }
@@ -398,6 +401,10 @@ func cwvStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time
 		info["label"] = "Poor"
 	}
 	return info
+}
+
+func sitemapStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryStatusFromIssues(issues, "sitemap", healthScore, updated)
 }
 
 func categoryStatusFromIssues(issues []models.SEOIssue, category string, healthScore int, updated time.Time) gin.H {

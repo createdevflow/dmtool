@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Search, ShieldCheck, AlertCircle,
   Zap, Loader2, CheckCircle2, RefreshCw,
-  ExternalLink, Clock, AlertTriangle, Info, FileText, Lock, Gauge,
+  ExternalLink, Clock, AlertTriangle, Info, FileText, Lock, Gauge, ListTree,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { dashboardApi } from "@/lib/api-client";
@@ -119,6 +119,41 @@ function cwvSummary(cwv: any): string {
     parts.push(`Lighthouse lab ${cwv.lab_performance}/100 (simulated, not CWV).`);
   }
   parts.push("Mobile PageSpeed Insights for this URL only.");
+  return parts.join(" ");
+}
+
+function sitemapHeadline(sm: any): string {
+  if (typeof sm?.url_count === "number" && sm.url_count > 0) return `${sm.url_count} URLs listed`;
+  if (sm?.label) return sm.label;
+  if (sm?.status === "pass") return "Pass";
+  if (sm?.status === "fail") return "Fail";
+  if (sm?.status === "warning") return "Warning";
+  return "Not checked";
+}
+
+function sitemapSummary(sm: any): string {
+  const parts: string[] = [];
+  if (sm?.declared_from_robots) {
+    const declared = (sm.declared || []).join(", ");
+    parts.push(declared ? `Declared in robots.txt: ${declared}.` : "Using Sitemap: URL(s) from robots.txt.");
+  } else if (sm?.fallback_url) {
+    parts.push(`No Sitemap: in robots.txt; fetched ${sm.fallback_url}.`);
+  }
+  if (typeof sm?.url_count === "number" && sm.url_count > 0) {
+    parts.push(`Counted ${sm.url_count} <loc> URL(s) in fetched sitemap XML.`);
+  } else if (sm?.status === "pass" || sm?.status === "warning" || sm?.status === "fail") {
+    parts.push("No <loc> URLs counted in fetched sitemap XML.");
+  }
+  if (sm?.index_children) {
+    parts.push(`Sitemap index listed ${sm.index_children} child sitemap(s).`);
+  }
+  if (sm?.truncated) {
+    parts.push("Fetch was capped (file size / child sitemaps) — this is not a full site inventory.");
+  }
+  if (sm?.sample?.length) {
+    parts.push(`Sample: ${sm.sample.join(", ")}.`);
+  }
+  parts.push("Listed URLs are not crawled. This is not a sitewide inventory.");
   return parts.join(" ");
 }
 
@@ -289,8 +324,8 @@ export default function SiteExplorerPage() {
         </div>
       </div>
 
-      {(auditResult?.robots || auditResult?.https || auditResult?.cwv) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+      {(auditResult?.robots || auditResult?.https || auditResult?.cwv || auditResult?.sitemap) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
           {auditResult?.robots && (
             <Card className="border-slate-100 rounded-2xl p-6 bg-white">
               <div className="flex items-start gap-4">
@@ -366,6 +401,29 @@ export default function SiteExplorerPage() {
                   {(auditResult.cwv.checked_at || auditResult.crawled_at) && (
                     <p className="text-xs text-slate-400 mt-2">
                       Last checked {new Date(auditResult.cwv.checked_at || auditResult.crawled_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+          {auditResult?.sitemap?.status && (
+            <Card className="border-slate-100 rounded-2xl p-6 bg-white">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+                  <ListTree className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">XML Sitemap</p>
+                  <p className="text-xl font-semibold text-slate-900 mt-0.5">
+                    {sitemapHeadline(auditResult.sitemap)}
+                  </p>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {sitemapSummary(auditResult.sitemap)}
+                  </p>
+                  {(auditResult.sitemap.checked_at || auditResult.crawled_at) && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Last checked {new Date(auditResult.sitemap.checked_at || auditResult.crawled_at).toLocaleString()}
                     </p>
                   )}
                 </div>

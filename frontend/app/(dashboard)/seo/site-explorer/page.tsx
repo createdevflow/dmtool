@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe, Search, ShieldCheck, AlertCircle,
   Zap, Loader2, CheckCircle2, RefreshCw,
-  ExternalLink, Clock, AlertTriangle, Info, FileText, Lock, Gauge, ListTree, ScanSearch, Timer,
+  ExternalLink, Clock, AlertTriangle, Info, FileText, Lock, Gauge, ListTree, ScanSearch, Timer, Languages, Braces,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { dashboardApi } from "@/lib/api-client";
@@ -12,6 +12,7 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DomainExplorerPanel } from "@/components/seo/domain-explorer";
 
 const severityConfig: Record<string, { color: string; bg: string; border: string; icon: any }> = {
   high:   { color: "text-rose-600",  bg: "bg-rose-50",   border: "border-rose-100", icon: AlertCircle },
@@ -222,6 +223,48 @@ function indexabilitySummary(idx: any): string {
   return parts.join(" ");
 }
 
+function statusHeadline(obj: any, fallback = "Not checked"): string {
+  if (obj?.label) return obj.label;
+  if (obj?.status === "pass") return "Pass";
+  if (obj?.status === "fail") return "Fail";
+  if (obj?.status === "warning") return "Warning";
+  return fallback;
+}
+
+function internationalHeadline(intl: any): string {
+  if (intl?.html_lang) return intl.html_lang;
+  return statusHeadline(intl);
+}
+
+function internationalSummary(intl: any): string {
+  const parts: string[] = [];
+  if (intl?.html_lang) parts.push(`html lang: ${intl.html_lang}.`);
+  else parts.push("No html lang on this page.");
+  const links = Array.isArray(intl?.hreflang) ? intl.hreflang : [];
+  if (links.length) parts.push(`Hreflang: ${links.map((h: any) => h.lang).join(", ")}.`);
+  else parts.push("No hreflang alternate links on this page.");
+  if (intl?.url_pattern) parts.push(`URL locale prefix: ${intl.url_pattern}.`);
+  parts.push("Checked this page only — not Google country targeting.");
+  return parts.join(" ");
+}
+
+function markupHeadline(mk: any): string {
+  const types = Array.isArray(mk?.types) ? mk.types : [];
+  if (types.length) return types.slice(0, 3).join(", ");
+  return statusHeadline(mk);
+}
+
+function markupSummary(mk: any): string {
+  const parts: string[] = [];
+  const types = Array.isArray(mk?.types) ? mk.types : [];
+  if (types.length) parts.push(`JSON-LD types: ${types.join(", ")}.`);
+  else if (mk?.present) parts.push("JSON-LD present on this page.");
+  else parts.push("No JSON-LD structured data on this page.");
+  if (mk?.parse_errors > 0) parts.push(`${mk.parse_errors} script(s) failed to parse.`);
+  parts.push("Checked this page only — not a rich-results validator.");
+  return parts.join(" ");
+}
+
 export default function SiteExplorerPage() {
   const [project, setProject] = useState<any>(null);
   const [auditResult, setAuditResult] = useState<any>(null);
@@ -257,6 +300,8 @@ export default function SiteExplorerPage() {
                 lighthouse: status.lighthouse,
                 sitemap: status.sitemap,
                 indexability: status.indexability,
+                international: status.international,
+                markup: status.markup,
               });
             }
           } catch {}
@@ -336,6 +381,8 @@ export default function SiteExplorerPage() {
         </Button>
       </div>
 
+      <DomainExplorerPanel projectId={project?.id} defaultDomain={project?.url || ""} />
+
       {/* Score card + stats */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <Card className="lg:col-span-1 border-slate-100 shadow-xl shadow-slate-200/20 rounded-3xl p-8 flex flex-col items-center justify-center text-center bg-white relative overflow-hidden">
@@ -392,7 +439,7 @@ export default function SiteExplorerPage() {
         </div>
       </div>
 
-      {(auditResult?.robots || auditResult?.https || auditResult?.cwv || auditResult?.lighthouse || auditResult?.sitemap || auditResult?.indexability) && (
+      {(auditResult?.robots || auditResult?.https || auditResult?.cwv || auditResult?.lighthouse || auditResult?.sitemap || auditResult?.indexability || auditResult?.international || auditResult?.markup) && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
           {auditResult?.robots && (
             <Card className="border-slate-100 rounded-2xl p-6 bg-white">
@@ -538,6 +585,52 @@ export default function SiteExplorerPage() {
                   {(auditResult.indexability.checked_at || auditResult.crawled_at) && (
                     <p className="text-xs text-slate-400 mt-2">
                       Last checked {new Date(auditResult.indexability.checked_at || auditResult.crawled_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+          {(auditResult?.international || auditResult?.international?.status) && (
+            <Card className="border-slate-100 rounded-2xl p-6 bg-white">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+                  <Languages className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">International SEO</p>
+                  <p className="text-xl font-semibold text-slate-900 mt-0.5">
+                    {internationalHeadline(auditResult.international)}
+                  </p>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {internationalSummary(auditResult.international)}
+                  </p>
+                  {(auditResult.international?.checked_at || auditResult.crawled_at) && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Last checked {new Date(auditResult.international?.checked_at || auditResult.crawled_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+          {(auditResult?.markup || auditResult?.markup?.status) && (
+            <Card className="border-slate-100 rounded-2xl p-6 bg-white">
+              <div className="flex items-start gap-4">
+                <div className="w-11 h-11 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+                  <Braces className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Structured Data</p>
+                  <p className="text-xl font-semibold text-slate-900 mt-0.5">
+                    {markupHeadline(auditResult.markup)}
+                  </p>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {markupSummary(auditResult.markup)}
+                  </p>
+                  {(auditResult.markup?.checked_at || auditResult.crawled_at) && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Last checked {new Date(auditResult.markup?.checked_at || auditResult.crawled_at).toLocaleString()}
                     </p>
                   )}
                 </div>

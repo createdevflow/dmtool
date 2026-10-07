@@ -221,6 +221,8 @@ export const dashboardApi = {
 
   getSocialInsights: (projectId: number) =>
     apiClient.get(`/social/insights?project_id=${projectId}`),
+  getSocialIdeas: (projectId: number) =>
+    apiClient.get(`/social/ideas?project_id=${projectId}`),
   refreshSocial: (projectId: number) =>
     apiClient.post(`/social/insights/refresh?project_id=${projectId}`),
   getSocialHistory: (projectId: number) =>
@@ -269,6 +271,20 @@ export const dashboardApi = {
 
   getRankTracking: (projectId: number) => apiClient.get(`/seo/rank-tracking?project_id=${projectId}`),
   getBacklinks: (projectId: number) => apiClient.get(`/seo/backlinks?project_id=${projectId}`),
+  getDomainExplorer: (projectId: number, domain?: string, opts?: { refresh?: boolean; fetch?: boolean }) => {
+    const params = new URLSearchParams({ project_id: String(projectId) });
+    if (domain) params.set("domain", domain);
+    if (opts?.refresh) params.set("refresh", "1");
+    else if (opts?.fetch) params.set("fetch", "1");
+    return apiClient.get(`/seo/domain-explorer?${params.toString()}`);
+  },
+  getAIVisibility: (projectId: number, domain?: string, opts?: { refresh?: boolean; fetch?: boolean }) => {
+    const params = new URLSearchParams({ project_id: String(projectId) });
+    if (domain) params.set("domain", domain);
+    if (opts?.refresh) params.set("refresh", "1");
+    else if (opts?.fetch) params.set("fetch", "1");
+    return apiClient.get(`/seo/ai-visibility?${params.toString()}`);
+  },
 
   getSocialHistoryForDelta: (projectId: number, days = 7) =>
     apiClient.get(`/social/history?project_id=${projectId}&days=${days}`),
@@ -277,6 +293,8 @@ export const dashboardApi = {
 export const socialApi = {
   getInsights: (projectId: number) =>
     apiClient.get(`/social/insights?project_id=${projectId}`),
+  getIdeas: (projectId: number) =>
+    apiClient.get(`/social/ideas?project_id=${projectId}`),
   refreshSocial: (projectId: number) =>
     apiClient.post(`/social/insights/refresh?project_id=${projectId}`),
   getHistory: (projectId: number) =>
@@ -551,8 +569,11 @@ export type KeywordResult = {
   seed: string;
   keyword: string;
   volume: number;
+  impressions?: number;
+  clicks?: number;
   kd: number;
   position: number;
+  intent?: string;
 };
 
 export type Metric = {

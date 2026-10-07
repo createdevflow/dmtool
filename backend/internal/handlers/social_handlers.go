@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -263,6 +264,70 @@ func (h *SocialHandler) SocialHistory(c *gin.Context) {
 	utils.Success(c, real, nil)
 }
 
+// SocialIdeas returns planning ideas from stored IG metrics only — not competitor trends.
+func (h *SocialHandler) SocialIdeas(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if project == nil || err != nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	metrics, _ := h.metricRepo.FindLatestSocialMetrics(pid)
+	ideas := make([]gin.H, 0)
+	for _, sm := range metrics {
+		if sm.IsSimulated {
+			continue
+		}
+		if strings.TrimSpace(sm.ActiveTimes) != "" {
+			var days []struct {
+				Day    string `json:"day"`
+				Active int    `json:"active"`
+			}
+			if err := json.Unmarshal([]byte(sm.ActiveTimes), &days); err == nil {
+				best, n := "", 0
+				for _, d := range days {
+					if d.Active > n && d.Day != "" {
+						n = d.Active
+						best = d.Day
+					}
+				}
+				if best != "" {
+					ideas = append(ideas, gin.H{
+						"type":   "best_time",
+						"title":  "Post on " + best,
+						"reason": "Peak online-followers day from your last Instagram sync. Recommendation only — not auto-publish.",
+						"format": "any",
+					})
+				}
+			}
+		}
+		if strings.TrimSpace(sm.TopContent) != "" {
+			var posts []struct {
+				Type         string `json:"type"`
+				Interactions int    `json:"interactions"`
+			}
+			if err := json.Unmarshal([]byte(sm.TopContent), &posts); err == nil && len(posts) > 0 {
+				top := posts[0]
+				ideas = append(ideas, gin.H{
+					"type":   "repeat_format",
+					"title":  "Make another " + strings.ToLower(top.Type),
+					"reason": fmt.Sprintf("Your top stored %s had %d interactions. From your account, not competitor posts.", strings.ToLower(top.Type), top.Interactions),
+					"format": strings.ToLower(top.Type),
+				})
+			}
+		}
+	}
+	utils.Success(c, gin.H{"ideas": ideas, "source": "connected_social"}, nil)
+}
+
 // RefreshSocial triggers an immediate sync of social metrics.
 // Priority: Meta API (if OAuth connected) → public scrape → hash estimate.
 func (h *SocialHandler) RefreshSocial(c *gin.Context) {
@@ -469,4 +534,3 @@ func (h *SocialHandler) RelatedProfiles(c *gin.Context) {
 		Message: "Profile discovery is not available.",
 	})
 }
-

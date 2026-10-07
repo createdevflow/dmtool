@@ -2,8 +2,10 @@
 package repository
 
 import (
-	"backend/internal/models"
+	"errors"
 	"time"
+
+	"backend/internal/models"
 
 	"gorm.io/gorm"
 )
@@ -20,6 +22,12 @@ type SEORepository interface {
 
 	ReplaceDimension(projectID uint, dimension string, rows []models.GSCBreakdown) error
 	FindBreakdowns(projectID uint, dimension string) ([]models.GSCBreakdown, error)
+
+	FindVendorDomainSnapshot(domain string, locationCode int, languageCode string) (*models.VendorDomainSnapshot, error)
+	SaveVendorDomainSnapshot(row *models.VendorDomainSnapshot) error
+
+	FindVendorAIVisibilitySnapshot(domain string, locationCode int, languageCode string) (*models.VendorAIVisibilitySnapshot, error)
+	SaveVendorAIVisibilitySnapshot(row *models.VendorAIVisibilitySnapshot) error
 }
 
 type gormSEORepository struct {
@@ -118,4 +126,62 @@ func (r *gormSEORepository) FindBreakdowns(projectID uint, dimension string) ([]
 	}
 	err := q.Order("clicks DESC").Find(&rows).Error
 	return rows, err
+}
+
+func (r *gormSEORepository) FindVendorDomainSnapshot(domain string, locationCode int, languageCode string) (*models.VendorDomainSnapshot, error) {
+	var row models.VendorDomainSnapshot
+	err := r.db.Where("domain = ? AND location_code = ? AND language_code = ?", domain, locationCode, languageCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *gormSEORepository) SaveVendorDomainSnapshot(row *models.VendorDomainSnapshot) error {
+	if row == nil {
+		return nil
+	}
+	var existing models.VendorDomainSnapshot
+	err := r.db.Where("domain = ? AND location_code = ? AND language_code = ?", row.Domain, row.LocationCode, row.LanguageCode).
+		First(&existing).Error
+	if err == nil {
+		existing.Source = row.Source
+		existing.Payload = row.Payload
+		existing.FetchedAt = row.FetchedAt
+		return r.db.Save(&existing).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return r.db.Create(row).Error
+}
+
+func (r *gormSEORepository) FindVendorAIVisibilitySnapshot(domain string, locationCode int, languageCode string) (*models.VendorAIVisibilitySnapshot, error) {
+	var row models.VendorAIVisibilitySnapshot
+	err := r.db.Where("domain = ? AND location_code = ? AND language_code = ?", domain, locationCode, languageCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *gormSEORepository) SaveVendorAIVisibilitySnapshot(row *models.VendorAIVisibilitySnapshot) error {
+	if row == nil {
+		return nil
+	}
+	var existing models.VendorAIVisibilitySnapshot
+	err := r.db.Where("domain = ? AND location_code = ? AND language_code = ?", row.Domain, row.LocationCode, row.LanguageCode).
+		First(&existing).Error
+	if err == nil {
+		existing.Source = row.Source
+		existing.Payload = row.Payload
+		existing.FetchedAt = row.FetchedAt
+		return r.db.Save(&existing).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return r.db.Create(row).Error
 }

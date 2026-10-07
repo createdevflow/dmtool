@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   BrainCircuit, Zap, AlertTriangle, Info, RefreshCw,
-  Loader2, ArrowRight, CheckCircle2, TrendingUp, Sparkles
+  Loader2, ArrowRight, CheckCircle2, TrendingUp, Sparkles, Lightbulb
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,7 @@ export default function SocialInsightsPage() {
   const [filter, setFilter] = useState("all");
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
   const [isSimulated, setIsSimulated] = useState(false);
+  const [ideas, setIdeas] = useState<any[]>([]);
 
   const fetchData = async (targetProjectId?: number) => {
     setLoading(true);
@@ -69,6 +70,14 @@ export default function SocialInsightsPage() {
         const socialData = socialRes.data?.data ?? [];
         const anySimulated = socialData.some((m: any) => m.is_simulated || m.IsSimulated);
         setIsSimulated(anySimulated);
+
+        try {
+          const ideasRes = await dashboardApi.getSocialIdeas(selected.id);
+          const ideasPayload = ideasRes.data?.data ?? ideasRes.data;
+          setIdeas(Array.isArray(ideasPayload?.ideas) ? ideasPayload.ideas : []);
+        } catch {
+          setIdeas([]);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -172,6 +181,26 @@ export default function SocialInsightsPage() {
           </div>
         </div>
       </motion.div>
+
+      {ideas.length > 0 && (
+        <Card className="border-slate-100 shadow-none rounded-2xl">
+          <CardContent className="p-6 space-y-3">
+            <div className="flex items-center gap-2">
+              <Lightbulb className="w-4 h-4 text-amber-500" />
+              <h3 className="text-sm font-semibold text-slate-900">Ideas from your connected account</h3>
+            </div>
+            <p className="text-xs text-slate-400">
+              From stored Instagram active times and top content. Not competitor trends and not auto-publish.
+            </p>
+            {ideas.map((idea: any, i: number) => (
+              <div key={`${idea.type ?? i}-${idea.title ?? i}`} className="rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
+                <p className="text-sm font-semibold text-slate-900">{idea.title}</p>
+                <p className="text-xs text-slate-500 mt-1">{idea.reason}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-2">

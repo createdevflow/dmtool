@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -153,12 +154,14 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		lighthouseOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		sitemapOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		indexabilityOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		internationalOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		markupOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 	}
 
 	// 5. Social metrics from DB (live rows only)
 	socialMetrics, _ := h.metricRepo.FindLatestSocialMetrics(pid)
 	socialHistory, _ := h.metricRepo.FindSocialMetricsByProject(pid, 30)
-	var latestFollowers, totalReach, profileVisits, postsCount int64
+	var latestFollowers, totalReach, profileVisits, postsCount, linkTaps, weeklyReach int64
 	var totalEngRate float64
 	liveSocial := 0
 
@@ -176,7 +179,11 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		totalEngRate += sm.Engagement
 		profileVisits += sm.ProfileVisits
 		postsCount += sm.PostsCount
+		linkTaps += sm.ExternalLinkTaps
+		weeklyReach += sm.WeeklyReach
 	}
+	topCountry, hasCountry := topAudienceCountry(socialMetrics)
+	bestDay, hasBestDay := bestPostingDay(socialMetrics)
 	var avgEngRate float64
 	if liveSocial > 0 {
 		avgEngRate = totalEngRate / float64(liveSocial)
@@ -196,6 +203,10 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		},
 		socialCountStat("Profile Visits", profileVisits, liveSocial, "Latest sync", "Eye"),
 		socialCountStat("Published Posts", postsCount, liveSocial, "Latest sync", "FileText"),
+		socialCountStat("Link Taps", linkTaps, liveSocial, "Latest sync", "MousePointer2"),
+		socialCountStat("Weekly Reach", weeklyReach, liveSocial, "7d", "Zap"),
+		storedSocialStat("Top Audience", topCountry, hasCountry, liveSocial, "From IG audience", "MapPin"),
+		storedSocialStat("Best Posting Day", bestDay, hasBestDay, liveSocial, "From online followers", "Clock"),
 	}
 
 	combinedStats := []gin.H{
@@ -245,6 +256,8 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		lighthouseOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		sitemapOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 		indexabilityOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		internationalOverviewStat(issues, project.HealthScore, project.UpdatedAt),
+		markupOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 	}
 
 	utils.Success(c, gin.H{
@@ -555,6 +568,14 @@ func indexabilityOverviewStat(issues []models.SEOIssue, healthScore int, updated
 	return categoryOverviewStat(indexabilityStatusFromIssues(issues, healthScore, updated), "Indexability", "ScanSearch")
 }
 
+func internationalOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryOverviewStat(internationalStatusFromIssues(issues, healthScore, updated), "International SEO", "Languages")
+}
+
+func markupOverviewStat(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryOverviewStat(markupStatusFromIssues(issues, healthScore, updated), "Structured Data", "Braces")
+}
+
 func categoryOverviewStat(info gin.H, tileLabel, icon string) gin.H {
 	label, _ := info["label"].(string)
 	status, _ := info["status"].(string)
@@ -609,6 +630,75 @@ func socialCountStat(label string, n int64, liveSocial int, change, icon string)
 		"trend":  "flat",
 		"icon":   icon,
 	}
+}
+
+func storedSocialStat(label, value string, ok bool, liveSocial int, change, icon string) gin.H {
+	if liveSocial == 0 {
+		return dashStat(label, "Connect social", icon)
+	}
+	if !ok || strings.TrimSpace(value) == "" {
+		return dashStat(label, "No audience data", icon)
+	}
+	return gin.H{
+		"label":  label,
+		"value":  value,
+		"change": change,
+		"trend":  "flat",
+		"icon":   icon,
+	}
+}
+
+func topAudienceCountry(metrics []models.SocialMetric) (string, bool) {
+	best := ""
+	bestN := 0
+	for _, sm := range metrics {
+		if sm.IsSimulated || strings.TrimSpace(sm.AudienceInsights) == "" {
+			continue
+		}
+		var payload struct {
+			Countries map[string]int `json:"countries"`
+		}
+		if err := json.Unmarshal([]byte(sm.AudienceInsights), &payload); err != nil {
+			continue
+		}
+		for code, n := range payload.Countries {
+			if n > bestN {
+				bestN = n
+				best = strings.ToUpper(code)
+			}
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	return best, true
+}
+
+func bestPostingDay(metrics []models.SocialMetric) (string, bool) {
+	best := ""
+	bestN := 0
+	for _, sm := range metrics {
+		if sm.IsSimulated || strings.TrimSpace(sm.ActiveTimes) == "" {
+			continue
+		}
+		var days []struct {
+			Day    string `json:"day"`
+			Active int    `json:"active"`
+		}
+		if err := json.Unmarshal([]byte(sm.ActiveTimes), &days); err != nil {
+			continue
+		}
+		for _, d := range days {
+			if d.Active > bestN && strings.TrimSpace(d.Day) != "" {
+				bestN = d.Active
+				best = d.Day
+			}
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	return best, true
 }
 
 func socialRateValue(rate float64, liveSocial int) string {

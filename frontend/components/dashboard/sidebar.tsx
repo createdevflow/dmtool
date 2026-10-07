@@ -19,6 +19,8 @@ import {
   ChevronDown,
   ChevronRight,
   Globe,
+  Sparkles,
+  Link as LinkIcon,
   CreditCard,
   Blocks,
   Shield,
@@ -57,9 +59,9 @@ export type NavGroup = {
   items: NavItem[];
 };
 
-// Honesty sprint Day 1–2: Backlink Analysis, Visual AI, and Profile
-// Discovery are omitted from navGroups (command menu follows this list).
-// Routes still exist as honest-empty pages. Rank Tracking stays.
+// Honesty sprint: Visual AI and Profile Discovery stay omitted.
+// Backlinks and AI Visibility are listed now that DataForSEO can populate
+// them; those pages are honest-empty when the vendor is not connected.
 //
 // Notes:
 //   * Settings points at /projects/settings — that's the only Settings
@@ -84,6 +86,8 @@ export const navGroups: NavGroup[] = [
       { name: "Site Explorer", href: "/seo/site-explorer", icon: Globe },
       { name: "Keyword Research", href: "/seo/keywords", icon: Search },
       { name: "Rank Tracking", href: "/seo/rank-tracking", icon: TrendingUp },
+      { name: "Backlinks", href: "/seo/backlinks", icon: LinkIcon },
+      { name: "AI Visibility", href: "/seo/ai-visibility", icon: Sparkles },
     ],
   },
   {

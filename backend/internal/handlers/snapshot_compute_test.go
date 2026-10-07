@@ -124,7 +124,7 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	web := labels(payload.WebsiteStats)
 	if !containsAll(web, "SEO Health", "Organic Traffic", "Search Impressions", "Click-Through Rate",
 		"Ranked Keywords", "Top 3 Keywords", "Page 1 Keywords", "Top Page", "Top Country", "Mobile Traffic",
-		"Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals", "PageSpeed Lab", "XML Sitemap", "Indexability") {
+		"Open SEO Issues", "robots.txt", "HTTPS", "Core Web Vitals", "PageSpeed Lab", "XML Sitemap", "Indexability", "International SEO", "Structured Data") {
 		t.Fatalf("website labels=%v", web)
 	}
 	if got := valueFor(payload.WebsiteStats, "Top Page"); got != "—" {
@@ -141,7 +141,7 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	}
 
 	soc := labels(payload.SocialStats)
-	if !containsAll(soc, "Total Followers", "Followers Gained", "Audience Reach", "Engagement Rate", "Profile Visits", "Published Posts") {
+	if !containsAll(soc, "Total Followers", "Followers Gained", "Audience Reach", "Engagement Rate", "Profile Visits", "Published Posts", "Link Taps", "Weekly Reach", "Top Audience", "Best Posting Day") {
 		t.Fatalf("social labels=%v", soc)
 	}
 	if contains(soc, "Content Score") {
@@ -175,6 +175,12 @@ func TestSnapshot_OverviewTilesFromStoredData(t *testing.T) {
 	}
 	if !contains(comb, "Indexability") {
 		t.Fatalf("combined missing Indexability: %v", comb)
+	}
+	if !contains(comb, "International SEO") {
+		t.Fatalf("combined missing International SEO: %v", comb)
+	}
+	if !contains(comb, "Structured Data") {
+		t.Fatalf("combined missing Structured Data: %v", comb)
 	}
 	if !contains(comb, "Top Page") || !contains(comb, "Mobile Traffic") {
 		t.Fatalf("combined missing GSC extras: %v", comb)
@@ -363,6 +369,28 @@ func TestLighthouseStatusFromIssues(t *testing.T) {
 	}, 70, updated)
 	if ignoreCWV["label"] != "Pass" {
 		t.Fatalf("cwv fail should not mark PageSpeed Lab fail, got %+v", ignoreCWV)
+	}
+}
+
+func TestInternationalAndMarkupStatusFromIssues(t *testing.T) {
+	updated := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	if internationalStatusFromIssues(nil, 0, updated)["status"] != "unknown" {
+		t.Fatal("no audit want unknown international")
+	}
+	if markupStatusFromIssues(nil, 70, updated)["label"] != "Pass" {
+		t.Fatal("audited with no markup issues want Pass")
+	}
+	fail := internationalStatusFromIssues([]models.SEOIssue{
+		{Category: "international", Severity: models.SeverityHigh, Detail: "bad hreflang"},
+	}, 40, updated)
+	if fail["label"] != "Fail" {
+		t.Fatalf("want Fail, got %+v", fail)
+	}
+	ignore := markupStatusFromIssues([]models.SEOIssue{
+		{Category: "cwv", Severity: models.SeverityHigh, Detail: "poor LCP"},
+	}, 70, updated)
+	if ignore["label"] != "Pass" {
+		t.Fatalf("cwv fail should not mark markup fail, got %+v", ignore)
 	}
 }
 

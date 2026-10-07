@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { TrendingUp, Users, UserPlus, Loader2, RefreshCw, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { TrendingUp, Users, UserPlus, Loader2, RefreshCw, ArrowUpRight, ArrowDownRight, MapPin, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
@@ -10,6 +10,52 @@ import { useEffect, useState } from "react";
 import { dashboardApi } from "@/lib/api-client";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { toast } from "@/components/ui/toaster";
+
+function topAudienceCountry(metric: any): string | null {
+  if (!metric?.audience_insights) return null;
+  try {
+    const parsed = JSON.parse(metric.audience_insights);
+    const countries = parsed?.countries;
+    if (!countries || typeof countries !== "object") return null;
+    let best = "";
+    let n = 0;
+    for (const [code, count] of Object.entries(countries)) {
+      const c = Number(count);
+      if (c > n && code) {
+        n = c;
+        best = String(code).toUpperCase();
+      }
+    }
+    return best || null;
+  } catch {
+    return null;
+  }
+}
+
+function bestPostingDay(metric: any): string | null {
+  if (!metric?.active_times) return null;
+  try {
+    const parsed = JSON.parse(metric.active_times);
+    let days: { day: string; active: number }[] = [];
+    if (Array.isArray(parsed)) {
+      days = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      days = Object.keys(parsed).map((k) => ({ day: k, active: Number(parsed[k]) }));
+    }
+    let best = "";
+    let n = 0;
+    for (const d of days) {
+      const active = Number(d.active);
+      if (active > n && d.day) {
+        n = active;
+        best = String(d.day);
+      }
+    }
+    return best || null;
+  } catch {
+    return null;
+  }
+}
 
 function computeDelta(history: any[], platform: string, field: "followers" | "reach" | "engagement_count") {
   const sorted = history
@@ -121,6 +167,8 @@ export default function GrowthTrackingPage() {
   const totalEngagement = activeSocial?.engagement_count ?? activeSocial?.engagementCount ?? 0;
   const totalReach = activeSocial?.reach ?? 0;
   const growthRate = activeSocial?.engagement?.toFixed(1) ?? "0.0";
+  const audienceCountry = topAudienceCountry(activeSocial);
+  const postingDay = bestPostingDay(activeSocial);
 
   // Follower growth chart data from history
   const followerChartRaw = finalSocialHistory
@@ -249,6 +297,35 @@ export default function GrowthTrackingPage() {
           </motion.div>
         ))}
       </div>
+
+      {(audienceCountry || postingDay) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card className="border-slate-100 shadow-none rounded-2xl">
+            <CardContent className="p-6 flex items-center gap-4">
+              <div className="p-3 rounded-2xl bg-slate-50 text-slate-600">
+                <MapPin className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-2xl font-black text-slate-900">{audienceCountry || "—"}</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-0.5">Top Audience</p>
+                <p className="text-[10px] text-slate-400 mt-1">From stored Instagram audience. Not a third-party demo report.</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-slate-100 shadow-none rounded-2xl">
+            <CardContent className="p-6 flex items-center gap-4">
+              <div className="p-3 rounded-2xl bg-slate-50 text-slate-600">
+                <Clock className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-2xl font-black text-slate-900">{postingDay || "—"}</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-0.5">Best Posting Day</p>
+                <p className="text-[10px] text-slate-400 mt-1">Peak online-followers day from your last sync. Recommendation only.</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Follower Growth Chart */}
       <Card className="border-slate-100 shadow-none rounded-3xl overflow-hidden">

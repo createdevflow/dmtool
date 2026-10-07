@@ -318,7 +318,7 @@ export default function AdminProjectDetailPage() {
                   <thead>
                     <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
                       <th className="pb-2 font-medium">Keyword</th>
-                      <th className="pb-2 font-medium">Volume</th>
+                      <th className="pb-2 font-medium">Impressions</th>
                       <th className="pb-2 font-medium">KD</th>
                       <th className="pb-2 font-medium">Position</th>
                     </tr>
@@ -327,8 +327,8 @@ export default function AdminProjectDetailPage() {
                     {keywords.slice(0, 20).map((kw) => (
                       <tr key={kw.id} className="border-b border-slate-100">
                         <td className="py-2 font-medium">{kw.keyword}</td>
-                        <td className="py-2 tabular-nums">{kw.volume.toLocaleString()}</td>
-                        <td className="py-2 tabular-nums">{kw.kd}</td>
+                        <td className="py-2 tabular-nums">{(kw.impressions ?? kw.volume) > 0 ? (kw.impressions ?? kw.volume).toLocaleString() : "—"}</td>
+                        <td className="py-2 tabular-nums">{kw.kd > 0 ? kw.kd : "—"}</td>
                         <td className="py-2 tabular-nums">{kw.position > 0 ? `#${kw.position}` : "—"}</td>
                       </tr>
                     ))}

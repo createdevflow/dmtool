@@ -50,13 +50,13 @@ func (h *SystemHandler) GetAutomations(c *gin.Context) {
 	for _, t := range tasks {
 		if t.Source == "automation" {
 			automations = append(automations, gin.H{
-				"id":       t.ID,
-				"name":     t.Title,
-				"trigger":  "engagement drops below 2%",
-				"action":   "Generate content suggestions",
-				"status":   !t.Completed,
-				"lastRun":  t.UpdatedAt.Format("Jan 2, 3:04 PM"),
-				"source":   t.Source,
+				"id":      t.ID,
+				"name":    t.Title,
+				"trigger": "engagement drops below 2%",
+				"action":  "Generate content suggestions",
+				"status":  !t.Completed,
+				"lastRun": t.UpdatedAt.Format("Jan 2, 3:04 PM"),
+				"source":  t.Source,
 			})
 		}
 	}
@@ -145,26 +145,27 @@ func (h *SystemHandler) GetCalendar(c *gin.Context) {
 	for _, t := range tasks {
 		if t.DueDate != nil {
 			events = append(events, gin.H{
-				"id":            t.ID,
-				"title":         t.Title,
-				"day":           t.DueDate.Day(),
-				"month":         int(t.DueDate.Month()),
-				"year":          t.DueDate.Year(),
-				"time":          t.DueDate.Format("3:04 PM"),
-				"platform":      t.Platform,
-				"content_type":  t.ContentType,
-				"asset_name":    t.AssetName,
-				"asset_url":     t.AssetURL,
-				"thumbnail_name": t.ThumbnailName,
-				"thumbnail_url":  t.ThumbnailURL,
-				"caption":       t.Caption,
-				"location":      t.Location,
-				"music":         t.Music,
-				"tags":          t.Tags,
-				"publish_status": t.PublishStatus,
-				"publish_error":  t.PublishError,
-				"due_date":      t.DueDate.Format(time.RFC3339),
-				"done":          t.Completed,
+				"id":              t.ID,
+				"title":           t.Title,
+				"day":             t.DueDate.Day(),
+				"month":           int(t.DueDate.Month()),
+				"year":            t.DueDate.Year(),
+				"time":            t.DueDate.Format("3:04 PM"),
+				"platform":        t.Platform,
+				"content_type":    t.ContentType,
+				"asset_name":      t.AssetName,
+				"asset_url":       t.AssetURL,
+				"thumbnail_name":  t.ThumbnailName,
+				"thumbnail_url":   t.ThumbnailURL,
+				"caption":         t.Caption,
+				"location":        t.Location,
+				"music":           t.Music,
+				"tags":            t.Tags,
+				"publish_status":  t.PublishStatus,
+				"pipeline_status": normalizePipelineStatus(t.PipelineStatus),
+				"publish_error":   t.PublishError,
+				"due_date":        t.DueDate.Format(time.RFC3339),
+				"done":            t.Completed,
 			})
 		}
 	}
@@ -172,23 +173,24 @@ func (h *SystemHandler) GetCalendar(c *gin.Context) {
 }
 
 type CalendarEventRequest struct {
-	ProjectID   uint   `json:"project_id" binding:"required"`
-	Title       string `json:"title" binding:"required"`
-	Platform    string `json:"platform"`
-	ContentType string `json:"content_type"`
-	AssetName   string `json:"asset_name"`
-	AssetURL    string `json:"asset_url"`
-	AssetPath     string `json:"asset_path"`
-	AssetMime     string `json:"asset_mime"`
-	ThumbnailName string `json:"thumbnail_name"`
-	ThumbnailURL  string `json:"thumbnail_url"`
-	ThumbnailPath string `json:"thumbnail_path"`
-	ThumbnailMime string `json:"thumbnail_mime"`
-	Caption       string `json:"caption"`
-	Location      string `json:"location"`
-	Music       string `json:"music"`
-	Tags        string `json:"tags"`
-	DueDate     string `json:"due_date"` // ISO 8601: 2026-05-15T10:00:00Z
+	ProjectID      uint   `json:"project_id" binding:"required"`
+	Title          string `json:"title" binding:"required"`
+	Platform       string `json:"platform"`
+	ContentType    string `json:"content_type"`
+	AssetName      string `json:"asset_name"`
+	AssetURL       string `json:"asset_url"`
+	AssetPath      string `json:"asset_path"`
+	AssetMime      string `json:"asset_mime"`
+	ThumbnailName  string `json:"thumbnail_name"`
+	ThumbnailURL   string `json:"thumbnail_url"`
+	ThumbnailPath  string `json:"thumbnail_path"`
+	ThumbnailMime  string `json:"thumbnail_mime"`
+	Caption        string `json:"caption"`
+	Location       string `json:"location"`
+	Music          string `json:"music"`
+	Tags           string `json:"tags"`
+	PipelineStatus string `json:"pipeline_status"`
+	DueDate        string `json:"due_date"` // ISO 8601: 2026-05-15T10:00:00Z
 }
 
 // CreateCalendarEvent creates a new task with a due date (appears on calendar).
@@ -203,6 +205,7 @@ func (h *SystemHandler) CreateCalendarEvent(c *gin.Context) {
 		req.Location = c.PostForm("location")
 		req.Music = c.PostForm("music")
 		req.Tags = c.PostForm("tags")
+		req.PipelineStatus = c.PostForm("pipeline_status")
 		req.DueDate = c.PostForm("due_date")
 		if fileHeader, err := c.FormFile("file"); err == nil && fileHeader != nil {
 			assetName, assetURL, assetPath, assetMime, saveErr := h.saveUploadedAsset(fileHeader)
@@ -253,24 +256,25 @@ func (h *SystemHandler) CreateCalendarEvent(c *gin.Context) {
 	}
 
 	task := &models.Task{
-		ProjectID:     req.ProjectID,
-		Title:         req.Title,
-		Platform:      req.Platform,
-		ContentType:   req.ContentType,
-		AssetName:     req.AssetName,
-		AssetURL:      req.AssetURL,
-		AssetPath:     req.AssetPath,
-		AssetMime:     req.AssetMime,
-		ThumbnailName: req.ThumbnailName,
-		ThumbnailURL:  req.ThumbnailURL,
-		ThumbnailPath: req.ThumbnailPath,
-		ThumbnailMime: req.ThumbnailMime,
-		Caption:       req.Caption,
-		Location:      req.Location,
-		Music:         req.Music,
-		Tags:          req.Tags,
-		Source:        source,
-		DueDate:       dueDate,
+		ProjectID:      req.ProjectID,
+		Title:          req.Title,
+		Platform:       req.Platform,
+		ContentType:    req.ContentType,
+		AssetName:      req.AssetName,
+		AssetURL:       req.AssetURL,
+		AssetPath:      req.AssetPath,
+		AssetMime:      req.AssetMime,
+		ThumbnailName:  req.ThumbnailName,
+		ThumbnailURL:   req.ThumbnailURL,
+		ThumbnailPath:  req.ThumbnailPath,
+		ThumbnailMime:  req.ThumbnailMime,
+		Caption:        req.Caption,
+		Location:       req.Location,
+		Music:          req.Music,
+		Tags:           req.Tags,
+		Source:         source,
+		DueDate:        dueDate,
+		PipelineStatus: normalizePipelineStatus(req.PipelineStatus),
 	}
 	if err := h.taskRepo.Create(task); err != nil {
 		utils.InternalError(c, "Failed to create calendar event")
@@ -278,18 +282,18 @@ func (h *SystemHandler) CreateCalendarEvent(c *gin.Context) {
 	}
 
 	event := gin.H{
-		"id":            task.ID,
-		"title":         task.Title,
-		"platform":      req.Platform,
-		"content_type":  task.ContentType,
-		"asset_name":    task.AssetName,
-		"asset_url":     task.AssetURL,
+		"id":             task.ID,
+		"title":          task.Title,
+		"platform":       req.Platform,
+		"content_type":   task.ContentType,
+		"asset_name":     task.AssetName,
+		"asset_url":      task.AssetURL,
 		"thumbnail_name": task.ThumbnailName,
 		"thumbnail_url":  task.ThumbnailURL,
-		"caption":       task.Caption,
-		"location":      task.Location,
-		"music":         task.Music,
-		"tags":          task.Tags,
+		"caption":        task.Caption,
+		"location":       task.Location,
+		"music":          task.Music,
+		"tags":           task.Tags,
 	}
 	if dueDate != nil {
 		event["day"] = dueDate.Day()
@@ -324,6 +328,7 @@ func (h *SystemHandler) UpdateCalendarEvent(c *gin.Context) {
 		req.Location = c.PostForm("location")
 		req.Music = c.PostForm("music")
 		req.Tags = c.PostForm("tags")
+		req.PipelineStatus = c.PostForm("pipeline_status")
 		req.DueDate = c.PostForm("due_date")
 		if fileHeader, err := c.FormFile("file"); err == nil && fileHeader != nil {
 			assetName, assetURL, assetPath, assetMime, saveErr := h.saveUploadedAsset(fileHeader)
@@ -399,6 +404,9 @@ func (h *SystemHandler) UpdateCalendarEvent(c *gin.Context) {
 	if req.Tags != "" {
 		task.Tags = req.Tags
 	}
+	if req.PipelineStatus != "" {
+		task.PipelineStatus = normalizePipelineStatus(req.PipelineStatus)
+	}
 	if req.DueDate != "" {
 		parsed, err := time.Parse(time.RFC3339, req.DueDate)
 		if err == nil {
@@ -433,6 +441,15 @@ func (h *SystemHandler) DeleteCalendarEvent(c *gin.Context) {
 	}
 
 	utils.Success(c, gin.H{"id": id}, nil)
+}
+
+func normalizePipelineStatus(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "idea", "draft", "design", "review", "approved":
+		return strings.ToLower(strings.TrimSpace(raw))
+	default:
+		return "idea"
+	}
 }
 
 func mustParseUint(value string) uint {

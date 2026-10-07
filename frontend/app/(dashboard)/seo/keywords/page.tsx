@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import {
   Search, Zap, Loader2, RefreshCw, Download,
-  TrendingUp, Minus, Database, Globe
+  Database, Globe
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -23,11 +23,26 @@ const difficultyLabel = (kd: number) => {
   return kd >= 60 ? "Hard" : kd >= 35 ? "Medium" : "Easy";
 };
 
-const formatVolume = (vol: number) => {
+const formatImpressions = (vol: number) => {
   if (vol >= 1_000_000) return `${(vol / 1_000_000).toFixed(1)}M`;
   if (vol >= 1_000) return `${(vol / 1_000).toFixed(1)}k`;
   return String(vol);
 };
+
+function intentBadgeClass(intent: string) {
+  switch (intent) {
+    case "transactional":
+      return "border-rose-200 text-rose-600 bg-rose-50";
+    case "commercial":
+      return "border-amber-200 text-amber-600 bg-amber-50";
+    case "informational":
+      return "border-blue-200 text-blue-600 bg-blue-50";
+    case "local":
+      return "border-emerald-200 text-emerald-600 bg-emerald-50";
+    default:
+      return "border-slate-200 text-slate-400 bg-slate-50";
+  }
+}
 
 export default function KeywordsPage() {
   const [project, setProject] = useState<any>(null);
@@ -36,6 +51,7 @@ export default function KeywordsPage() {
   const [generating, setGenerating] = useState(false);
   const [seed, setSeed] = useState("");
   const [source, setSource] = useState("");
+  const [ideas, setIdeas] = useState<any[]>([]);
   const [filter, setFilter] = useState<"all" | "easy" | "medium" | "hard">("all");
 
   useEffect(() => {
@@ -50,6 +66,7 @@ export default function KeywordsPage() {
           const data = res.data?.data ?? res.data;
           setKeywords(data?.keywords ?? (Array.isArray(data) ? data : []));
           setSource(data?.source ?? "");
+          setIdeas(Array.isArray(data?.ideas) ? data.ideas : []);
         }
       } catch (err) {
         console.error(err);
@@ -77,6 +94,7 @@ export default function KeywordsPage() {
         return [...fresh, ...prev];
       });
       setSource(data?.source ?? "autocomplete");
+      setIdeas(Array.isArray(data?.ideas) ? data.ideas : []);
       setSeed("");
     } catch (err) {
       console.error(err);
@@ -87,9 +105,9 @@ export default function KeywordsPage() {
 
   const handleExportCSV = () => {
     if (!keywords.length) return;
-    const header = "Keyword,Monthly Volume,Difficulty,Position,Source\n";
+    const header = "Keyword,Impressions (GSC not search volume),Clicks,Difficulty,Position,Intent,Source\n";
     const rows = keywords.map((k: any) =>
-      `"${k.keyword}",${k.volume},${k.kd},${k.position > 0 ? k.position.toFixed(1) : "—"},${k.seed ?? ""}`
+      `"${k.keyword}",${k.impressions ?? k.volume ?? 0},${k.clicks ?? 0},${k.kd},${k.position > 0 ? k.position.toFixed(1) : "—"},${k.intent ?? ""},${k.seed ?? ""}`
     ).join("\n");
     const blob = new Blob([header + rows], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -113,7 +131,7 @@ export default function KeywordsPage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Keyword Research</h1>
             <p className="text-slate-500 mt-1">
-              Discover search terms that drive organic traffic.
+              GSC queries when connected; otherwise Google autocomplete. Impressions are not search volume.
               {source && (
                 <span className="ml-2 inline-flex items-center gap-1 text-xs text-slate-400">
                   {source === "gsc" ? (
@@ -195,10 +213,11 @@ export default function KeywordsPage() {
                 <thead>
                   <tr className="text-slate-400 border-b border-slate-50 bg-slate-50/30">
                     <th className="text-left font-semibold py-4 pl-6 text-[10px] uppercase tracking-widest">Keyword</th>
-                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Monthly Volume</th>
+                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Impressions</th>
+                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Clicks</th>
+                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Intent</th>
                     <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Difficulty</th>
-                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Position</th>
-                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest pr-6">Trend</th>
+                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest pr-6">Position</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -220,9 +239,18 @@ export default function KeywordsPage() {
                           )}
                         </td>
                         <td className="py-4 font-mono text-slate-700 font-semibold">
-                          {kw.volume ? formatVolume(kw.volume) : "—"}
-                          {kw.volume > 10000 && (
-                            <span className="ml-1.5 text-[10px] text-emerald-500 font-bold">HIGH</span>
+                          {(kw.impressions ?? kw.volume) ? formatImpressions(kw.impressions ?? kw.volume) : "—"}
+                        </td>
+                        <td className="py-4 font-mono text-slate-700 font-semibold">
+                          {kw.clicks > 0 ? formatImpressions(kw.clicks) : "—"}
+                        </td>
+                        <td className="py-4">
+                          {kw.intent && kw.intent !== "unknown" ? (
+                            <Badge variant="outline" className={`${intentBadgeClass(kw.intent)} text-[10px] font-bold capitalize`}>
+                              {kw.intent}
+                            </Badge>
+                          ) : (
+                            <span className="text-slate-300">—</span>
                           )}
                         </td>
                         <td className="py-4">
@@ -234,19 +262,8 @@ export default function KeywordsPage() {
                             <span className="text-slate-300">—</span>
                           )}
                         </td>
-                        <td className={`py-4 font-bold ${hasPosition ? positionColor : "text-slate-300"}`}>
+                        <td className={`py-4 pr-6 font-bold ${hasPosition ? positionColor : "text-slate-300"}`}>
                           {hasPosition ? `#${Math.round(kw.position)}` : "—"}
-                        </td>
-                        <td className="py-4 pr-6">
-                          {kw.volume ? (
-                            kw.volume > 10000 ? (
-                              <TrendingUp className="w-4 h-4 text-emerald-500" />
-                            ) : (
-                              <Minus className="w-4 h-4 text-amber-400" />
-                            )
-                          ) : (
-                            <span className="text-slate-300">—</span>
-                          )}
                         </td>
                       </motion.tr>
                     );
@@ -257,6 +274,35 @@ export default function KeywordsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {ideas.length > 0 && (
+        <Card className="border-slate-100 shadow-sm overflow-hidden rounded-3xl">
+          <CardContent className="p-6 space-y-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Ideas from your GSC queries</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Question-style terms and zero-click queries from Search Console. Not search volume and not competitor gaps.
+              </p>
+            </div>
+            {ideas.map((idea: any, i: number) => (
+              <div key={`${idea.keyword ?? i}`} className="rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-semibold text-slate-900">{idea.keyword}</p>
+                  {idea.intent && idea.intent !== "unknown" && (
+                    <Badge variant="outline" className={`${intentBadgeClass(idea.intent)} text-[10px] font-bold capitalize`}>
+                      {idea.intent}
+                    </Badge>
+                  )}
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    {idea.type === "zero_click" ? "Zero clicks" : "Question"}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">{idea.reason}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

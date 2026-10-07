@@ -38,6 +38,21 @@ const playSuccessSound = () => {
   }
 };
 
+type PipelineStatus = "idea" | "draft" | "design" | "review" | "approved";
+
+const PIPELINE_STATUSES: { value: PipelineStatus; label: string }[] = [
+  { value: "idea", label: "Idea" },
+  { value: "draft", label: "Draft" },
+  { value: "design", label: "Design" },
+  { value: "review", label: "Review" },
+  { value: "approved", label: "Approved" },
+];
+
+function normalizePipeline(raw: unknown): PipelineStatus {
+  const v = String(raw || "").toLowerCase();
+  return PIPELINE_STATUSES.some((s) => s.value === v) ? (v as PipelineStatus) : "idea";
+}
+
 type ScheduledDraft = {
   title: string;
   platform: string;
@@ -55,6 +70,7 @@ type ScheduledDraft = {
   thumbnailUrl?: string;
   assetUrl?: string;
   previewUrl?: string;
+  pipelineStatus: PipelineStatus;
 };
 
 const parseTimeStr = (timeStr: string) => {
@@ -85,7 +101,7 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedDay, setSelectedDay] = useState<Date>(new Date());
   const [postFilter, setPostFilter] = useState<string>("All");
-  const [drafts, setDrafts] = useState<ScheduledDraft[]>([{ title: "", platform: "instagram", contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "" }]);
+  const [drafts, setDrafts] = useState<ScheduledDraft[]>([{ title: "", platform: "instagram", contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "", pipelineStatus: "idea" }]);
   const [saving, setSaving] = useState(false);
   const [showDayDetails, setShowDayDetails] = useState(true);
   const [editingTask, setEditingTask] = useState<any | null>(null);
@@ -163,6 +179,7 @@ export default function CalendarPage() {
               tags: t.tags || "",
               dueDate: t.due_date,
               publishStatus: t.publish_status || "scheduled",
+              pipelineStatus: normalizePipeline(t.pipeline_status),
               publishError: t.publish_error || "",
               done: t.completed || t.done || t.publish_status === "published" || false,
               time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
@@ -192,7 +209,11 @@ export default function CalendarPage() {
 
   const filteredPosts = useMemo(() => {
     if (postFilter === "All") return posts;
-    return posts.filter(p => p.publishStatus === postFilter.toLowerCase());
+    const key = postFilter.toLowerCase();
+    if (key === "scheduled" || key === "published" || key === "failed") {
+      return posts.filter(p => p.publishStatus === key);
+    }
+    return posts.filter(p => p.pipelineStatus === key);
   }, [posts, postFilter]);
 
   const getProjectPlatform = (project: any) => {
@@ -208,7 +229,7 @@ export default function CalendarPage() {
     const initialDate = date ?? new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
     setSelectedDate(initialDate);
     setSelectedDay(initialDate);
-    setDrafts([{ title: "", platform: getProjectPlatform(project), contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "" }]);
+    setDrafts([{ title: "", platform: getProjectPlatform(project), contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "", pipelineStatus: "idea" }]);
     setEditingTask(null);
   };
 
@@ -235,13 +256,13 @@ export default function CalendarPage() {
       : new Date(task.dueDate);
     setSelectedDate(taskDate);
     setSelectedDay(taskDate);
-    setDrafts([{ title: task.title, platform: getProjectPlatform(project), contentType: task.contentType, time: new Date(task.dueDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), caption: task.caption, location: task.location, music: task.music, musicPreviewUrl: "", tags: task.tags || "", assetName: task.assetName, assetUrl: task.assetUrl, file: null, thumbnail: null, thumbnailName: task.thumbnailName || "", thumbnailUrl: task.thumbnailUrl || "" }]);
+    setDrafts([{ title: task.title, platform: getProjectPlatform(project), contentType: task.contentType, time: new Date(task.dueDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), caption: task.caption, location: task.location, music: task.music, musicPreviewUrl: "", tags: task.tags || "", assetName: task.assetName, assetUrl: task.assetUrl, file: null, thumbnail: null, thumbnailName: task.thumbnailName || "", thumbnailUrl: task.thumbnailUrl || "", pipelineStatus: normalizePipeline(task.pipelineStatus) }]);
     setShowDayDetails(false);
   };
 
   const closeEdit = () => {
     setEditingTask(null);
-    setDrafts([{ title: "", platform: "instagram", contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "" }]);
+    setDrafts([{ title: "", platform: "instagram", contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "", pipelineStatus: "idea" }]);
   };
 
   const handleFileChange = (index: number, field: "file" | "thumbnail", file: File | null) => {
@@ -264,7 +285,7 @@ export default function CalendarPage() {
   };
 
   const addDraftRow = () => {
-    setDrafts(currentDrafts => [...currentDrafts, { title: "", platform: getProjectPlatform(project), contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "" }]);
+    setDrafts(currentDrafts => [...currentDrafts, { title: "", platform: getProjectPlatform(project), contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "", pipelineStatus: "idea" }]);
   };
 
   const removeDraftRow = (index: number) => {
@@ -332,6 +353,7 @@ export default function CalendarPage() {
         formData.append("caption", draft.caption);
         formData.append("tags", draft.tags || "");
         formData.append("due_date", dueDate.toISOString());
+        formData.append("pipeline_status", draft.pipelineStatus || "idea");
         if (draft.file) {
           formData.append("file", draft.file);
         }
@@ -349,7 +371,7 @@ export default function CalendarPage() {
 
       setSelectedDate(null);
       setEditingTask(null);
-      setDrafts([{ title: "", platform: "instagram", contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "" }]);
+      setDrafts([{ title: "", platform: "instagram", contentType: "post", time: "10:00", caption: "", location: "", music: "", musicPreviewUrl: "", tags: "", assetName: "", file: null, thumbnail: null, thumbnailName: "", pipelineStatus: "idea" }]);
       await fetchData();
     } catch (err: any) {
       console.error("saveScheduledContent error:", err);
@@ -368,6 +390,17 @@ export default function CalendarPage() {
       setShowDayDetails(true);
     } catch (err) {
       alert("Failed to delete scheduled content.");
+    }
+  };
+
+  const updatePipeline = async (task: any, status: string) => {
+    try {
+      const formData = new FormData();
+      formData.append("pipeline_status", normalizePipeline(status));
+      await dashboardApi.updateCalendarEvent(task.id, formData);
+      await fetchData(project?.id);
+    } catch (err) {
+      toast("Could not update pipeline status.", "error");
     }
   };
 
@@ -623,6 +656,11 @@ export default function CalendarPage() {
                   <DropdownMenuItem className="rounded-lg cursor-pointer text-xs text-blue-600 font-medium" onClick={() => setPostFilter("Scheduled")}>Scheduled</DropdownMenuItem>
                   <DropdownMenuItem className="rounded-lg cursor-pointer text-xs text-emerald-600 font-medium" onClick={() => setPostFilter("Published")}>Published</DropdownMenuItem>
                   <DropdownMenuItem className="rounded-lg cursor-pointer text-xs text-rose-600 font-medium" onClick={() => setPostFilter("Failed")}>Failed</DropdownMenuItem>
+                  {PIPELINE_STATUSES.map((s) => (
+                    <DropdownMenuItem key={s.value} className="rounded-lg cursor-pointer text-xs font-medium capitalize" onClick={() => setPostFilter(s.value)}>
+                      {s.label}
+                    </DropdownMenuItem>
+                  ))}
                 </DropdownMenuContent>
               </DropdownMenu>
 
@@ -677,6 +715,15 @@ export default function CalendarPage() {
                             <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset ${task.done ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : (statusLabel === 'Publishing...' ? 'bg-sky-50 text-sky-700 ring-sky-600/20 animate-pulse' : 'bg-amber-50 text-amber-700 ring-amber-600/20')}`}>
                               {statusLabel}
                             </span>
+                            <select
+                              value={normalizePipeline(task.pipelineStatus)}
+                              onChange={(event) => updatePipeline(task, event.target.value)}
+                              className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600 outline-none"
+                            >
+                              {PIPELINE_STATUSES.map((s) => (
+                                <option key={s.value} value={s.value}>{s.label}</option>
+                              ))}
+                            </select>
                             {countdownText && (
                               <span className="flex items-center gap-1.5 text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
                                 <Clock className="h-3 w-3 text-slate-400" />
@@ -740,6 +787,19 @@ export default function CalendarPage() {
             <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
               {drafts.map((draft, index) => (
                 <div key={index} className="grid grid-cols-1 md:grid-cols-12 gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
+                  <div className="md:col-span-12">
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Pipeline</label>
+                    <select
+                      value={draft.pipelineStatus}
+                      onChange={(event) => updateDraft(index, "pipelineStatus", event.target.value)}
+                      className="w-full max-w-xs rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-slate-400"
+                    >
+                      {PIPELINE_STATUSES.map((s) => (
+                        <option key={s.value} value={s.value}>{s.label}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[10px] text-slate-400">Planning stage only — not the same as auto-publish status.</p>
+                  </div>
                   <div className="md:col-span-2">
                     <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Post Type</label>
                     <select

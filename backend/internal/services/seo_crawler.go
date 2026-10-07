@@ -34,16 +34,18 @@ type AuditCheck struct {
 
 // AuditResult is the full output of a crawl.
 type AuditResult struct {
-	URL          string             `json:"url"`
-	Score        int                `json:"score"` // 0-100
-	Checks       []AuditCheck       `json:"checks"`
-	CrawledAt    time.Time          `json:"crawled_at"`
-	LoadTimeMs   int64              `json:"load_time_ms"`
-	Robots       RobotsReport       `json:"robots"`
-	HTTPS        HTTPSReport        `json:"https"`
-	CWV          CWVReport          `json:"cwv"`
-	Sitemap      SitemapReport      `json:"sitemap"`
-	Indexability IndexabilityReport `json:"indexability"`
+	URL           string              `json:"url"`
+	Score         int                 `json:"score"` // 0-100
+	Checks        []AuditCheck        `json:"checks"`
+	CrawledAt     time.Time           `json:"crawled_at"`
+	LoadTimeMs    int64               `json:"load_time_ms"`
+	Robots        RobotsReport        `json:"robots"`
+	HTTPS         HTTPSReport         `json:"https"`
+	CWV           CWVReport           `json:"cwv"`
+	Sitemap       SitemapReport       `json:"sitemap"`
+	Indexability  IndexabilityReport  `json:"indexability"`
+	International InternationalReport `json:"international"`
+	Markup        MarkupReport        `json:"markup"`
 }
 
 // SEOCrawlerService crawls a URL and returns a structured AuditResult.
@@ -136,7 +138,6 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 	ogDesc := extractMetaProperty(doc, "og:description")
 	ogImage := extractMetaProperty(doc, "og:image")
 	viewport := extractMetaContent(doc, "viewport")
-	hasStructuredData := strings.Contains(bodyStr, `"@type"`) || strings.Contains(bodyStr, `application/ld+json`)
 	imagesMissingAlt := countImagesMissingAlt(doc)
 
 	// PageSpeed Insights in parallel with on-page checks (can take ~30–55s).
@@ -168,6 +169,14 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 	idxReport, idxChecks := InspectIndexability(finalURL, doc, resp.Header, result.CrawledAt)
 	result.Indexability = idxReport
 	result.Checks = append(result.Checks, idxChecks...)
+
+	intlReport, intlChecks := InspectInternational(finalURL, doc, result.CrawledAt)
+	result.International = intlReport
+	result.Checks = append(result.Checks, intlChecks...)
+
+	markupReport, markupChecks := InspectMarkup(doc, result.CrawledAt)
+	result.Markup = markupReport
+	result.Checks = append(result.Checks, markupChecks...)
 
 	// Check: HTTP Status Code
 	if resp.StatusCode == 200 {
@@ -339,23 +348,6 @@ func (c *seoCrawler) Crawl(targetURL string) (*AuditResult, error) {
 			Status: CheckFail, Severity: "high",
 			Detail:         "No viewport meta tag found.",
 			Recommendation: "Add <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"> for mobile friendliness.",
-		})
-	}
-
-	// Check: Structured Data
-	if hasStructuredData {
-		result.Checks = append(result.Checks, AuditCheck{
-			Category: "technical", Label: "Structured Data",
-			Status: CheckPass, Severity: "medium",
-			Detail:         "JSON-LD structured data found.",
-			Recommendation: "",
-		})
-	} else {
-		result.Checks = append(result.Checks, AuditCheck{
-			Category: "technical", Label: "Structured Data",
-			Status: CheckWarning, Severity: "low",
-			Detail:         "No JSON-LD structured data detected.",
-			Recommendation: "Add Schema.org structured data (JSON-LD) to improve rich snippets in search results.",
 		})
 	}
 

@@ -11,9 +11,10 @@ vi.mock("next/link", () => ({
 import { navGroups } from "./sidebar";
 
 describe("navGroups honesty", () => {
-  it("does not list Backlink Analysis, Visual AI, or Profile Discovery", () => {
+  it("does not list Visual AI or Profile Discovery", () => {
     const hrefs = navGroups.flatMap((g) => g.items.map((i) => i.href));
-    expect(hrefs).not.toContain("/seo/backlinks");
+    expect(hrefs).toContain("/seo/backlinks");
+    expect(hrefs).toContain("/seo/ai-visibility");
     expect(hrefs).not.toContain("/ai/visual");
     expect(hrefs).not.toContain("/social/competitors");
   });

@@ -1,6 +1,10 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,6 +17,7 @@ import (
 	"backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type SEOHandler struct {
@@ -99,17 +104,19 @@ func (h *SEOHandler) AuditRun(c *gin.Context) {
 	issuesSummary := countIssues(result.Checks)
 
 	utils.Success(c, gin.H{
-		"url":          result.URL,
-		"score":        result.Score,
-		"checks":       result.Checks,
-		"load_time_ms": result.LoadTimeMs,
-		"crawled_at":   result.CrawledAt,
-		"robots":       result.Robots,
-		"https":        result.HTTPS,
-		"cwv":          result.CWV,
-		"sitemap":      result.Sitemap,
-		"indexability": result.Indexability,
-		"issues_found": issuesSummary,
+		"url":           result.URL,
+		"score":         result.Score,
+		"checks":        result.Checks,
+		"load_time_ms":  result.LoadTimeMs,
+		"crawled_at":    result.CrawledAt,
+		"robots":        result.Robots,
+		"https":         result.HTTPS,
+		"cwv":           result.CWV,
+		"sitemap":       result.Sitemap,
+		"indexability":  result.Indexability,
+		"international": result.International,
+		"markup":        result.Markup,
+		"issues_found":  issuesSummary,
 	}, nil)
 }
 
@@ -160,7 +167,7 @@ func (h *SEOHandler) Keywords(c *gin.Context) {
 	// Check cache
 	cached, fresh, _ := h.seoRepo.FindKeywords(pid, seed)
 	if fresh && len(cached) > 0 {
-		utils.Success(c, gin.H{"keywords": cached, "source": "cache", "seed": seed}, nil)
+		utils.Success(c, gin.H{"keywords": keywordPublicList(cached), "ideas": ideasForKeywordSource(cached, "cache"), "source": "cache", "seed": seed}, nil)
 		return
 	}
 
@@ -171,7 +178,8 @@ func (h *SEOHandler) Keywords(c *gin.Context) {
 	}
 
 	utils.Success(c, gin.H{
-		"keywords": keywords,
+		"keywords": keywordPublicList(keywords),
+		"ideas":    ideasForKeywordSource(keywords, source),
 		"source":   source,
 		"seed":     seed,
 		"count":    len(keywords),
@@ -204,7 +212,7 @@ func (h *SEOHandler) KeywordsPost(c *gin.Context) {
 
 	cached, fresh, _ := h.seoRepo.FindKeywords(req.ProjectID, seed)
 	if fresh && len(cached) > 0 {
-		utils.Success(c, gin.H{"keywords": cached, "source": "cache", "seed": seed}, nil)
+		utils.Success(c, gin.H{"keywords": keywordPublicList(cached), "ideas": ideasForKeywordSource(cached, "cache"), "source": "cache", "seed": seed}, nil)
 		return
 	}
 
@@ -215,7 +223,8 @@ func (h *SEOHandler) KeywordsPost(c *gin.Context) {
 	}
 
 	utils.Success(c, gin.H{
-		"keywords": keywords,
+		"keywords": keywordPublicList(keywords),
+		"ideas":    ideasForKeywordSource(keywords, source),
 		"source":   source,
 		"seed":     seed,
 		"count":    len(keywords),
@@ -323,17 +332,19 @@ func (h *SEOHandler) GetAuditStatus(c *gin.Context) {
 	issues, _ := h.seoRepo.FindOpenIssues(pid, "")
 
 	utils.Success(c, gin.H{
-		"score":        project.HealthScore,
-		"health":       project.Health,
-		"issues_count": len(issues),
-		"url":          project.URL,
-		"last_updated": project.UpdatedAt.Format(time.RFC3339),
-		"robots":       robotsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
-		"https":        httpsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
-		"cwv":          cwvStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
-		"lighthouse":   lighthouseStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
-		"sitemap":      sitemapStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
-		"indexability": indexabilityStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"score":         project.HealthScore,
+		"health":        project.Health,
+		"issues_count":  len(issues),
+		"url":           project.URL,
+		"last_updated":  project.UpdatedAt.Format(time.RFC3339),
+		"robots":        robotsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"https":         httpsStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"cwv":           cwvStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"lighthouse":    lighthouseStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"sitemap":       sitemapStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"indexability":  indexabilityStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"international": internationalStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
+		"markup":        markupStatusFromIssues(issues, project.HealthScore, project.UpdatedAt),
 	}, nil)
 }
 
@@ -354,15 +365,17 @@ func (h *SEOHandler) PublicAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"url":          result.URL,
-			"score":        result.Score,
-			"checks":       result.Checks,
-			"crawled_at":   result.CrawledAt,
-			"robots":       result.Robots,
-			"https":        result.HTTPS,
-			"cwv":          result.CWV,
-			"sitemap":      result.Sitemap,
-			"indexability": result.Indexability,
+			"url":           result.URL,
+			"score":         result.Score,
+			"checks":        result.Checks,
+			"crawled_at":    result.CrawledAt,
+			"robots":        result.Robots,
+			"https":         result.HTTPS,
+			"cwv":           result.CWV,
+			"sitemap":       result.Sitemap,
+			"indexability":  result.Indexability,
+			"international": result.International,
+			"markup":        result.Markup,
 		},
 	})
 }
@@ -417,6 +430,85 @@ func sitemapStatusFromIssues(issues []models.SEOIssue, healthScore int, updated 
 
 func indexabilityStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
 	return categoryStatusFromIssues(issues, "indexability", healthScore, updated)
+}
+
+func internationalStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryStatusFromIssues(issues, "international", healthScore, updated)
+}
+
+func markupStatusFromIssues(issues []models.SEOIssue, healthScore int, updated time.Time) gin.H {
+	return categoryStatusFromIssues(issues, "markup", healthScore, updated)
+}
+
+func keywordPublicList(kws []models.KeywordResult) []gin.H {
+	out := make([]gin.H, 0, len(kws))
+	for _, k := range kws {
+		out = append(out, gin.H{
+			"id":          k.ID,
+			"keyword":     k.Keyword,
+			"seed":        k.Seed,
+			"volume":      k.Volume,
+			"impressions": k.Volume,
+			"clicks":      k.Clicks,
+			"kd":          k.KD,
+			"position":    k.Position,
+			"intent":      services.GuessSearchIntent(k.Keyword),
+		})
+	}
+	return out
+}
+
+func ideasForKeywordSource(kws []models.KeywordResult, source string) []gin.H {
+	switch source {
+	case "gsc":
+		return gscContentIdeas(kws)
+	case "cache":
+		for _, k := range kws {
+			if k.Position > 0 || k.Clicks > 0 {
+				return gscContentIdeas(kws)
+			}
+		}
+		return []gin.H{}
+	default:
+		return []gin.H{}
+	}
+}
+
+func gscContentIdeas(kws []models.KeywordResult) []gin.H {
+	clicksKnown := false
+	for _, k := range kws {
+		if k.Clicks > 0 {
+			clicksKnown = true
+			break
+		}
+	}
+	out := make([]gin.H, 0)
+	for _, k := range kws {
+		if len(out) >= 8 {
+			break
+		}
+		intent := services.GuessSearchIntent(k.Keyword)
+		if clicksKnown && k.Clicks == 0 && k.Volume >= 20 {
+			out = append(out, gin.H{
+				"type":        "zero_click",
+				"keyword":     k.Keyword,
+				"impressions": k.Volume,
+				"intent":      intent,
+				"reason":      "GSC impressions with no clicks in this window. Not search volume and not a competitor gap.",
+			})
+			continue
+		}
+		if intent == "informational" {
+			out = append(out, gin.H{
+				"type":        "question",
+				"keyword":     k.Keyword,
+				"impressions": k.Volume,
+				"intent":      intent,
+				"reason":      "Question-style query from your GSC. Directional idea only.",
+			})
+		}
+	}
+	return out
 }
 
 func categoryStatusFromIssues(issues []models.SEOIssue, category string, healthScore int, updated time.Time) gin.H {
@@ -565,7 +657,8 @@ func (h *SEOHandler) RankTracking(c *gin.Context) {
 	}
 
 	utils.Success(c, gin.H{
-		"keywords":      ranked,
+		"keywords":      keywordPublicList(ranked),
+		"ideas":         gscContentIdeas(ranked),
 		"total":         len(ranked),
 		"visibility":    visibilityScore,
 		"gsc_connected": isGSCConnected,
@@ -588,7 +681,33 @@ func (h *SEOHandler) RankTracking(c *gin.Context) {
 	}, nil)
 }
 
-// Backlinks does not have a link index. Returns zeros rather than estimated counts.
+const vendorSnapshotTTL = 24 * time.Hour
+
+func (h *SEOHandler) dataForSEOReady() bool {
+	return h.dataForSEOSvc != nil && h.dataForSEOSvc.Configured()
+}
+
+func emptyBacklinksPayload(updated time.Time, message string) gin.H {
+	return gin.H{
+		"total_backlinks":   0,
+		"referring_domains": 0,
+		"do_follow":         0,
+		"no_follow":         0,
+		"domain_authority":  0,
+		"rank":              0,
+		"gsc_connected":     false,
+		"is_estimated":      false,
+		"available":         false,
+		"configured":        false,
+		"source":            "",
+		"top_domains":       []gin.H{},
+		"last_updated":      updated.Format(time.RFC3339),
+		"message":           message,
+	}
+}
+
+// Backlinks returns DataForSEO Backlinks index data when a cached domain
+// lookup exists. It does not invent counts. Moz Domain Authority is not provided.
 func (h *SEOHandler) Backlinks(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 	projectIDStr := c.Query("project_id")
@@ -606,17 +725,369 @@ func (h *SEOHandler) Backlinks(c *gin.Context) {
 		return
 	}
 
+	if !h.dataForSEOReady() {
+		utils.Success(c, emptyBacklinksPayload(project.UpdatedAt, "Backlink index is not connected."), nil)
+		return
+	}
+
+	host := services.NormalizeDomain(project.URL)
+	result, ok := h.cachedDomainExplorer(host)
+	if !ok || !result.BacklinksOK {
+		payload := emptyBacklinksPayload(project.UpdatedAt, "Look up this domain in Site Explorer to load DataForSEO backlinks.")
+		payload["configured"] = true
+		payload["domain"] = host
+		utils.Success(c, payload, nil)
+		return
+	}
+
 	utils.Success(c, gin.H{
-		"total_backlinks":   0,
-		"referring_domains": 0,
+		"total_backlinks":   result.Backlinks.Backlinks,
+		"referring_domains": result.Backlinks.ReferringDomains,
 		"do_follow":         0,
 		"no_follow":         0,
 		"domain_authority":  0,
+		"rank":              result.Backlinks.Rank,
+		"spam_score":        result.Backlinks.SpamScore,
 		"gsc_connected":     false,
 		"is_estimated":      false,
-		"available":         false,
+		"available":         true,
+		"configured":        true,
+		"cached":            true,
+		"source":            "dataforseo",
+		"domain":            result.Domain,
 		"top_domains":       []gin.H{},
-		"last_updated":      project.UpdatedAt.Format(time.RFC3339),
-		"message":           "Backlink index is not connected.",
+		"last_updated":      result.FetchedAt.Format(time.RFC3339),
+		"message":           "From DataForSEO Backlinks index. Rank is DataForSEO Rank, not Moz Domain Authority.",
 	}, nil)
+}
+
+// DomainExplorer looks up any domain via DataForSEO Labs + Backlinks.
+// Does not run on page load unless refresh=1 or cache is cold after an explicit lookup.
+func (h *SEOHandler) DomainExplorer(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	domain := c.Query("domain")
+	if domain == "" {
+		domain = project.URL
+	}
+	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
+	wantFetch := refresh || c.Query("fetch") == "1" || strings.EqualFold(c.Query("fetch"), "true")
+
+	if !h.dataForSEOReady() {
+		utils.Success(c, gin.H{
+			"available":      false,
+			"configured":     false,
+			"source":         "dataforseo",
+			"domain":         services.NormalizeDomain(domain),
+			"message":        "DataForSEO is not connected. Set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD.",
+			"organic_ok":     false,
+			"backlinks_ok":   false,
+			"competitors_ok": false,
+			"keywords_ok":    false,
+			"competitors":    []gin.H{},
+			"keywords":       []gin.H{},
+		}, nil)
+		return
+	}
+
+	if !wantFetch {
+		if cached, ok := h.cachedDomainExplorer(domain); ok {
+			utils.Success(c, domainExplorerJSON(cached, true), nil)
+			return
+		}
+		utils.Success(c, gin.H{
+			"available":      false,
+			"configured":     true,
+			"domain":         services.NormalizeDomain(domain),
+			"source":         "dataforseo",
+			"message":        "Click Look up to query DataForSEO. This uses vendor credits; results cache 24 hours.",
+			"organic_ok":     false,
+			"backlinks_ok":   false,
+			"competitors_ok": false,
+			"keywords_ok":    false,
+			"competitors":    []gin.H{},
+			"keywords":       []gin.H{},
+		}, nil)
+		return
+	}
+
+	result, cached, err := h.loadDomainExplorer(c.Request.Context(), domain, refresh)
+	if err != nil {
+		if errors.Is(err, services.ErrDataForSEONotConfigured) {
+			utils.Success(c, gin.H{
+				"available":  false,
+				"configured": false,
+				"message":    "DataForSEO is not connected.",
+			}, nil)
+			return
+		}
+		utils.Success(c, gin.H{
+			"available":      false,
+			"configured":     true,
+			"domain":         services.NormalizeDomain(domain),
+			"source":         "dataforseo",
+			"message":        err.Error(),
+			"organic_ok":     false,
+			"backlinks_ok":   false,
+			"competitors_ok": false,
+			"keywords_ok":    false,
+			"competitors":    []gin.H{},
+			"keywords":       []gin.H{},
+		}, nil)
+		return
+	}
+	result.Cached = cached
+	utils.Success(c, domainExplorerJSON(result, cached), nil)
+}
+
+func domainExplorerJSON(result services.DomainExplorerResult, cached bool) gin.H {
+	return gin.H{
+		"available":         result.HasAnyData(),
+		"configured":        true,
+		"source":            result.Source,
+		"domain":            result.Domain,
+		"location_code":     result.LocationCode,
+		"location_name":     result.LocationName,
+		"language_code":     result.LanguageCode,
+		"organic":           result.Organic,
+		"organic_ok":        result.OrganicOK,
+		"organic_error":     result.OrganicError,
+		"backlinks":         result.Backlinks,
+		"backlinks_ok":      result.BacklinksOK,
+		"backlinks_error":   result.BacklinksError,
+		"competitors":       result.Competitors,
+		"competitors_ok":    result.CompetitorsOK,
+		"competitors_error": result.CompetitorsError,
+		"keywords":          result.Keywords,
+		"keywords_ok":       result.KeywordsOK,
+		"keywords_error":    result.KeywordsError,
+		"cached":            cached,
+		"fetched_at":        result.FetchedAt.Format(time.RFC3339),
+		"message":           "DataForSEO Labs estimates for Google United States. Not Google Search Console and not a sitewide crawl.",
+	}
+}
+
+func (h *SEOHandler) cachedDomainExplorer(domain string) (services.DomainExplorerResult, bool) {
+	host := services.NormalizeDomain(domain)
+	if host == "" || h.seoRepo == nil {
+		return services.DomainExplorerResult{}, false
+	}
+	snap, err := h.seoRepo.FindVendorDomainSnapshot(host, services.DataForSEOLocation, services.DataForSEOLanguage)
+	if err != nil || snap == nil || snap.Payload == "" {
+		return services.DomainExplorerResult{}, false
+	}
+	var cached services.DomainExplorerResult
+	if json.Unmarshal([]byte(snap.Payload), &cached) != nil || !cached.HasAnyData() {
+		return services.DomainExplorerResult{}, false
+	}
+	cached.Cached = true
+	return cached, true
+}
+
+func (h *SEOHandler) loadDomainExplorer(ctx context.Context, domain string, refresh bool) (services.DomainExplorerResult, bool, error) {
+	host := services.NormalizeDomain(domain)
+	if host == "" {
+		return services.DomainExplorerResult{}, false, fmt.Errorf("invalid domain")
+	}
+	if h.seoRepo != nil && !refresh {
+		snap, err := h.seoRepo.FindVendorDomainSnapshot(host, services.DataForSEOLocation, services.DataForSEOLanguage)
+		if err == nil && snap != nil && time.Since(snap.FetchedAt) < vendorSnapshotTTL && snap.Payload != "" {
+			var cached services.DomainExplorerResult
+			if json.Unmarshal([]byte(snap.Payload), &cached) == nil && cached.HasAnyData() {
+				cached.Cached = true
+				return cached, true, nil
+			}
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[seo] vendor snapshot read: %v", err)
+		}
+	}
+
+	result, err := h.dataForSEOSvc.DomainExplorer(ctx, host)
+	if err != nil {
+		return result, false, err
+	}
+	if h.seoRepo != nil && result.HasAnyData() {
+		raw, _ := json.Marshal(result)
+		_ = h.seoRepo.SaveVendorDomainSnapshot(&models.VendorDomainSnapshot{
+			Domain:       result.Domain,
+			LocationCode: result.LocationCode,
+			LanguageCode: result.LanguageCode,
+			Source:       result.Source,
+			Payload:      string(raw),
+			FetchedAt:    result.FetchedAt,
+		})
+	}
+	return result, false, nil
+}
+
+// AIVisibility returns DataForSEO LLM Mentions for a domain (Google AI
+// Overviews + ChatGPT). Cache-only unless fetch=1 or refresh=1. Does not
+// write vendor counts into dashboard metrics.
+func (h *SEOHandler) AIVisibility(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	domain := c.Query("domain")
+	if domain == "" {
+		domain = project.URL
+	}
+	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
+	wantFetch := refresh || c.Query("fetch") == "1" || strings.EqualFold(c.Query("fetch"), "true")
+
+	if !h.dataForSEOReady() {
+		utils.Success(c, gin.H{
+			"available":    false,
+			"configured":   false,
+			"source":       "dataforseo",
+			"domain":       services.NormalizeDomain(domain),
+			"message":      "DataForSEO is not connected. Set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD.",
+			"mentions_ok":  false,
+			"citations_ok": false,
+			"mentions":     services.LLMMetrics{Sources: []services.LLMSourceDomain{}},
+			"citations":    services.LLMMetrics{Sources: []services.LLMSourceDomain{}},
+		}, nil)
+		return
+	}
+
+	if !wantFetch {
+		if cached, ok := h.cachedAIVisibility(domain); ok {
+			utils.Success(c, aiVisibilityJSON(cached, true), nil)
+			return
+		}
+		utils.Success(c, gin.H{
+			"available":    false,
+			"configured":   true,
+			"domain":       services.NormalizeDomain(domain),
+			"source":       "dataforseo",
+			"message":      "Click Look up to query DataForSEO LLM Mentions. This uses vendor credits; results cache 24 hours.",
+			"mentions_ok":  false,
+			"citations_ok": false,
+			"mentions":     services.LLMMetrics{Sources: []services.LLMSourceDomain{}},
+			"citations":    services.LLMMetrics{Sources: []services.LLMSourceDomain{}},
+		}, nil)
+		return
+	}
+
+	result, cached, err := h.loadAIVisibility(c.Request.Context(), domain, refresh)
+	if err != nil {
+		if errors.Is(err, services.ErrDataForSEONotConfigured) {
+			utils.Success(c, gin.H{
+				"available":  false,
+				"configured": false,
+				"message":    "DataForSEO is not connected.",
+			}, nil)
+			return
+		}
+		utils.Success(c, gin.H{
+			"available":    false,
+			"configured":   true,
+			"domain":       services.NormalizeDomain(domain),
+			"source":       "dataforseo",
+			"message":      err.Error(),
+			"mentions_ok":  false,
+			"citations_ok": false,
+			"mentions":     services.LLMMetrics{Sources: []services.LLMSourceDomain{}},
+			"citations":    services.LLMMetrics{Sources: []services.LLMSourceDomain{}},
+		}, nil)
+		return
+	}
+	result.Cached = cached
+	utils.Success(c, aiVisibilityJSON(result, cached), nil)
+}
+
+func aiVisibilityJSON(result services.AIVisibilityResult, cached bool) gin.H {
+	return gin.H{
+		"available":       result.HasAnyData(),
+		"configured":      true,
+		"source":          result.Source,
+		"domain":          result.Domain,
+		"location_code":   result.LocationCode,
+		"location_name":   result.LocationName,
+		"language_code":   result.LanguageCode,
+		"mentions":        result.Mentions,
+		"mentions_ok":     result.MentionsOK,
+		"mentions_error":  result.MentionsError,
+		"citations":       result.Citations,
+		"citations_ok":    result.CitationsOK,
+		"citations_error": result.CitationsError,
+		"cached":          cached,
+		"fetched_at":      result.FetchedAt.Format(time.RFC3339),
+		"message":         "DataForSEO LLM Mentions for Google AI Overviews and ChatGPT (United States, English). Citations are sources the models actually used. Not Search Console.",
+	}
+}
+
+func (h *SEOHandler) cachedAIVisibility(domain string) (services.AIVisibilityResult, bool) {
+	host := services.NormalizeDomain(domain)
+	if host == "" || h.seoRepo == nil {
+		return services.AIVisibilityResult{}, false
+	}
+	snap, err := h.seoRepo.FindVendorAIVisibilitySnapshot(host, services.DataForSEOLocation, services.DataForSEOLanguage)
+	if err != nil || snap == nil || snap.Payload == "" {
+		return services.AIVisibilityResult{}, false
+	}
+	var cached services.AIVisibilityResult
+	if json.Unmarshal([]byte(snap.Payload), &cached) != nil || !cached.HasAnyData() {
+		return services.AIVisibilityResult{}, false
+	}
+	cached.Cached = true
+	return cached, true
+}
+
+func (h *SEOHandler) loadAIVisibility(ctx context.Context, domain string, refresh bool) (services.AIVisibilityResult, bool, error) {
+	host := services.NormalizeDomain(domain)
+	if host == "" {
+		return services.AIVisibilityResult{}, false, fmt.Errorf("invalid domain")
+	}
+	if h.seoRepo != nil && !refresh {
+		snap, err := h.seoRepo.FindVendorAIVisibilitySnapshot(host, services.DataForSEOLocation, services.DataForSEOLanguage)
+		if err == nil && snap != nil && time.Since(snap.FetchedAt) < vendorSnapshotTTL && snap.Payload != "" {
+			var cached services.AIVisibilityResult
+			if json.Unmarshal([]byte(snap.Payload), &cached) == nil && cached.HasAnyData() {
+				cached.Cached = true
+				return cached, true, nil
+			}
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[seo] ai visibility snapshot read: %v", err)
+		}
+	}
+
+	result, err := h.dataForSEOSvc.AIVisibility(ctx, host)
+	if err != nil {
+		return result, false, err
+	}
+	if h.seoRepo != nil && result.HasAnyData() {
+		raw, _ := json.Marshal(result)
+		_ = h.seoRepo.SaveVendorAIVisibilitySnapshot(&models.VendorAIVisibilitySnapshot{
+			Domain:       result.Domain,
+			LocationCode: result.LocationCode,
+			LanguageCode: result.LanguageCode,
+			Source:       result.Source,
+			Payload:      string(raw),
+			FetchedAt:    result.FetchedAt,
+		})
+	}
+	return result, false, nil
 }

@@ -10,7 +10,7 @@ import {
   ArrowUpRight, ArrowDownRight, Activity, Globe, 
   Users, Target, Zap, MousePointer2, TrendingUp,
   BarChart3, Sparkles, Search, AlertCircle, Eye, UserPlus, FileText, Lock, Gauge,
-  Link as LinkIcon, MapPin, Smartphone, ListTree, ScanSearch, Timer
+  Link as LinkIcon, MapPin, Smartphone, ListTree, ScanSearch, Timer, Clock, Languages, Braces
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Mode } from "./dashboard-mode-context";
@@ -30,7 +30,7 @@ const iconMap: Record<string, any> = {
   Target, Globe, TrendingUp, MousePointer2,
   Activity, Users, Zap, BarChart3, Sparkles,
   Search, AlertCircle, Eye, UserPlus, FileText, Lock, Gauge,
-  Link: LinkIcon, MapPin, Smartphone, ListTree, ScanSearch, Timer,
+  Link: LinkIcon, MapPin, Smartphone, ListTree, ScanSearch, Timer, Clock, Languages, Braces,
 };
 
 // Fallback stats shown while API data loads. trend is "flat" (never
@@ -54,6 +54,8 @@ const fallbackWebsite = [
   { label: "PageSpeed Lab", value: "—", change: "—", trend: "flat", icon: Timer },
   { label: "XML Sitemap", value: "—", change: "—", trend: "flat", icon: ListTree },
   { label: "Indexability", value: "—", change: "—", trend: "flat", icon: ScanSearch },
+  { label: "International SEO", value: "—", change: "—", trend: "flat", icon: Languages },
+  { label: "Structured Data", value: "—", change: "—", trend: "flat", icon: Braces },
 ];
 const fallbackSocial = [
   { label: "Total Followers", value: "—", change: "—", trend: "flat", icon: Users },
@@ -62,6 +64,10 @@ const fallbackSocial = [
   { label: "Engagement Rate", value: "—", change: "—", trend: "flat", icon: Activity },
   { label: "Profile Visits", value: "—", change: "—", trend: "flat", icon: Eye },
   { label: "Published Posts", value: "—", change: "—", trend: "flat", icon: FileText },
+  { label: "Link Taps", value: "—", change: "—", trend: "flat", icon: MousePointer2 },
+  { label: "Weekly Reach", value: "—", change: "—", trend: "flat", icon: Zap },
+  { label: "Top Audience", value: "—", change: "—", trend: "flat", icon: MapPin },
+  { label: "Best Posting Day", value: "—", change: "—", trend: "flat", icon: Clock },
 ];
 const fallbackCombined = [
   { label: "Organic Traffic", value: "—", change: "—", trend: "flat", icon: Globe },
@@ -80,6 +86,8 @@ const fallbackCombined = [
   { label: "PageSpeed Lab", value: "—", change: "—", trend: "flat", icon: Timer },
   { label: "XML Sitemap", value: "—", change: "—", trend: "flat", icon: ListTree },
   { label: "Indexability", value: "—", change: "—", trend: "flat", icon: ScanSearch },
+  { label: "International SEO", value: "—", change: "—", trend: "flat", icon: Languages },
+  { label: "Structured Data", value: "—", change: "—", trend: "flat", icon: Braces },
 ];
 
 function mapStats(raw?: any[]) {
@@ -123,6 +131,8 @@ const SOCIAL_SIGNAL_LABELS = new Set([
   "Audience Reach",
   "Profile Visits",
   "Published Posts",
+  "Link Taps",
+  "Weekly Reach",
 ]);
 
 function tileHasSignal(stat: any): boolean {

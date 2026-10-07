@@ -107,6 +107,7 @@ export default function RankTrackingPage() {
   const countries = data?.countries ?? [];
   const devices = data?.devices ?? [];
   const appearance = data?.search_appearance ?? [];
+  const ideas = Array.isArray(data?.ideas) ? data.ideas : [];
   const windowLabel =
     data?.window?.start && data?.window?.end
       ? `GSC ${data.window.start} → ${data.window.end} (3-day lag)`
@@ -251,6 +252,34 @@ export default function RankTrackingPage() {
               rows={appearance}
             />
           )}
+          {ideas.length > 0 && (
+            <Card className="border-slate-100 shadow-none rounded-2xl">
+              <CardHeader className="px-8 pt-8 pb-4">
+                <CardTitle className="text-base font-semibold">Content ideas from your GSC</CardTitle>
+                <p className="text-xs text-slate-400 mt-1">
+                  Query-text intent guess and zero-click queries from this window. Not search volume, not a competitor gap, not declining pages.
+                </p>
+              </CardHeader>
+              <CardContent className="px-8 pb-8 space-y-3">
+                {ideas.map((idea: any, i: number) => (
+                  <div key={`${idea.keyword ?? i}`} className="rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-semibold text-slate-900">{idea.keyword}</p>
+                      {idea.intent && idea.intent !== "unknown" && (
+                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${intentBadgeClass(idea.intent)}`}>
+                          {idea.intent}
+                        </span>
+                      )}
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        {idea.type === "zero_click" ? "Zero clicks" : "Question"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">{idea.reason}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 
@@ -259,7 +288,7 @@ export default function RankTrackingPage() {
         <CardHeader className="px-8 pt-8 pb-4 flex flex-row items-center justify-between gap-4">
           <div>
             <CardTitle className="text-base font-semibold">Keyword Rankings</CardTitle>
-            <p className="text-xs text-slate-400 mt-1">Positions from Google Search Console, not a daily rank tracker.</p>
+            <p className="text-xs text-slate-400 mt-1">Impressions are GSC impressions, not search volume. Intent is a query-text guess.</p>
           </div>
           <div className="relative w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -285,8 +314,9 @@ export default function RankTrackingPage() {
                     <th className="text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest px-8 py-3">#</th>
                     <th className="text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">Keyword</th>
                     <th className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">Position</th>
-                    <th className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">Volume</th>
-                    <th className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">Difficulty</th>
+                    <th className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">Impressions</th>
+                    <th className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">Clicks</th>
+                    <th className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 py-3">Intent</th>
                     <th className="text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest px-8 py-3">Status</th>
                   </tr>
                 </thead>
@@ -310,19 +340,16 @@ export default function RankTrackingPage() {
                         </span>
                       </td>
                       <td className="px-4 py-4 text-center">
-                        <span className="font-semibold text-slate-700">{kw.volume > 0 ? kw.volume.toLocaleString() : "—"}</span>
+                        <span className="font-semibold text-slate-700">{(kw.impressions ?? kw.volume) > 0 ? Number(kw.impressions ?? kw.volume).toLocaleString() : "—"}</span>
                       </td>
                       <td className="px-4 py-4 text-center">
-                        {kw.kd > 0 ? (
-                          <div className="flex items-center justify-center gap-2">
-                            <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                              <div
-                                className={`h-full rounded-full ${kw.kd > 60 ? "bg-rose-400" : kw.kd > 40 ? "bg-amber-400" : "bg-emerald-400"}`}
-                                style={{ width: `${kw.kd}%` }}
-                              />
-                            </div>
-                            <span className="text-xs font-semibold text-slate-500">{kw.kd}</span>
-                          </div>
+                        <span className="font-semibold text-slate-700">{kw.clicks > 0 ? Number(kw.clicks).toLocaleString() : "—"}</span>
+                      </td>
+                      <td className="px-4 py-4 text-center">
+                        {kw.intent && kw.intent !== "unknown" ? (
+                          <span className={`inline-flex items-center justify-center text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-md ${intentBadgeClass(kw.intent)}`}>
+                            {kw.intent}
+                          </span>
                         ) : (
                           <span className="text-slate-300">—</span>
                         )}
@@ -342,6 +369,21 @@ export default function RankTrackingPage() {
       </Card>
     </div>
   );
+}
+
+function intentBadgeClass(intent: string) {
+  switch (intent) {
+    case "transactional":
+      return "text-rose-600 bg-rose-50";
+    case "commercial":
+      return "text-amber-600 bg-amber-50";
+    case "informational":
+      return "text-blue-600 bg-blue-50";
+    case "local":
+      return "text-emerald-600 bg-emerald-50";
+    default:
+      return "text-slate-500 bg-slate-50";
+  }
 }
 
 function formatGscNum(n: unknown): string {

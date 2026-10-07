@@ -53,7 +53,7 @@ func (s *keywordService) FetchGSCKeywords(ctx context.Context, siteURL string, t
 		return nil, fmt.Errorf("failed to create GSC service: %w", err)
 	}
 
-	endDate := time.Now().AddDate(0, 0, -3).Format("2006-01-02")   // GSC 3-day lag
+	endDate := time.Now().AddDate(0, 0, -3).Format("2006-01-02")    // GSC 3-day lag
 	startDate := time.Now().AddDate(0, 0, -33).Format("2006-01-02") // 30 days of data
 
 	req := &searchconsole.SearchAnalyticsQueryRequest{
@@ -74,12 +74,12 @@ func (s *keywordService) FetchGSCKeywords(ctx context.Context, siteURL string, t
 			continue
 		}
 		kw := row.Keys[0]
-		kd := estimateKD(kw, int(row.Impressions))
 		results = append(results, models.KeywordResult{
 			Seed:     kw,
 			Keyword:  kw,
-			Volume:   int(row.Impressions),
-			KD:       kd,
+			Volume:   int(row.Impressions), // GSC impressions, not search volume
+			Clicks:   int(row.Clicks),
+			KD:       0, // do not invent keyword difficulty
 			Position: row.Position,
 		})
 	}
@@ -182,32 +182,31 @@ func (s *keywordService) fetchGoogleSuggest(query string) []string {
 	return suggestions
 }
 
-// estimateKD heuristically estimates keyword difficulty (0-100).
-// High volume + short keyword = high difficulty.
-func estimateKD(kw string, volume int) int {
-	words := len(strings.Fields(kw))
-	base := 0
+// GuessSearchIntent is a query-text guess, not a Semrush intent classifier.
+func GuessSearchIntent(query string) string {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return ""
+	}
 	switch {
-	case volume > 50000:
-		base = 75
-	case volume > 10000:
-		base = 60
-	case volume > 1000:
-		base = 40
+	case hasAnyWord(q, "buy", "price", "pricing", "cheap", "order", "coupon", "deal", "discount", "shop"):
+		return "transactional"
+	case hasAnyWord(q, "near me", "nearby"):
+		return "local"
+	case hasAnyWord(q, "best", "vs", "versus", "review", "compare", "top"):
+		return "commercial"
+	case hasAnyWord(q, "how", "what", "why", "when", "guide", "tutorial", "meaning"):
+		return "informational"
 	default:
-		base = 20
+		return "unknown"
 	}
-	// Long-tail keywords are easier
-	if words >= 4 {
-		base -= 20
-	} else if words >= 3 {
-		base -= 10
+}
+
+func hasAnyWord(q string, needles ...string) bool {
+	for _, n := range needles {
+		if strings.Contains(q, n) {
+			return true
+		}
 	}
-	if base < 5 {
-		base = 5
-	}
-	if base > 95 {
-		base = 95
-	}
-	return base
+	return false
 }

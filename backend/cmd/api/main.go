@@ -418,6 +418,8 @@ func registerSEORoutes(
 	g.PUT("/seo/issues/:id", h.ResolveIssue)
 	g.GET("/seo/rank-tracking", h.RankTracking)
 	g.GET("/seo/backlinks", h.Backlinks)
+	g.GET("/seo/domain-explorer", h.DomainExplorer)
+	g.GET("/seo/ai-visibility", h.AIVisibility)
 }
 
 func registerSocialRoutes(
@@ -436,6 +438,7 @@ func registerSocialRoutes(
 	h := handlers.NewSocialHandler(projectRepo, metricRepo, oauthRepo, rapidAPISvc, scraperService, metaService, linkedinService, metaPageAccessToken, linkedinAccessToken, encKey)
 
 	g.GET("/social/insights", h.SocialInsights)
+	g.GET("/social/ideas", h.SocialIdeas)
 	g.POST("/social/insights/refresh", h.RefreshSocial)
 	g.GET("/social/history", h.SocialHistory)
 	g.GET("/social/profile", h.PublicProfile)

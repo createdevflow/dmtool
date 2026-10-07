@@ -44,6 +44,8 @@ func RunMigrations(database *gorm.DB) error {
 		&models.Role{},
 		&models.RolePermission{},
 		&models.GSCBreakdown{},
+		&models.VendorDomainSnapshot{},
+		&models.VendorAIVisibilitySnapshot{},
 	}
 
 	migrator := database.Migrator()
@@ -67,6 +69,12 @@ func RunMigrations(database *gorm.DB) error {
 	}
 	// Phase 1: admin user management columns.
 	if err := addAdminUserColumns(migrator); err != nil {
+		return err
+	}
+	if err := addKeywordClicksColumn(migrator); err != nil {
+		return err
+	}
+	if err := addTaskPipelineStatusColumn(migrator); err != nil {
 		return err
 	}
 
@@ -118,6 +126,28 @@ func addAdminUserColumns(migrator gorm.Migrator) error {
 			log.Printf("[migrate] added column users.%s\n", c.col)
 		}
 	}
+	return nil
+}
+
+func addKeywordClicksColumn(migrator gorm.Migrator) error {
+	if !migrator.HasTable("keyword_results") || migrator.HasColumn(&models.KeywordResult{}, "clicks") {
+		return nil
+	}
+	if err := migrator.AddColumn(&models.KeywordResult{}, "Clicks"); err != nil {
+		return err
+	}
+	log.Println("[migrate] added column keyword_results.clicks")
+	return nil
+}
+
+func addTaskPipelineStatusColumn(migrator gorm.Migrator) error {
+	if !migrator.HasTable("tasks") || migrator.HasColumn(&models.Task{}, "pipeline_status") {
+		return nil
+	}
+	if err := migrator.AddColumn(&models.Task{}, "PipelineStatus"); err != nil {
+		return err
+	}
+	log.Println("[migrate] added column tasks.pipeline_status (default 'idea')")
 	return nil
 }
 

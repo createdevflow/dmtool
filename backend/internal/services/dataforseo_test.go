@@ -89,6 +89,58 @@ func TestDomainExplorerParsesMockAPI(t *testing.T) {
 	}
 }
 
+func TestKeywordOverviewParsesMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "keyword_overview") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"keyword":"Buy Widgets","keyword_info":{"search_volume":2200,"cpc":1.5},"keyword_properties":{"keyword_difficulty":44}},{"keyword":"cheap widgets","keyword_info":{"search_volume":80,"cpc":0.2,"keyword_difficulty":12}}]}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.KeywordOverview(context.Background(), []string{"Buy Widgets", "cheap widgets", "Buy Widgets"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buy := got["buy widgets"]
+	if buy.SearchVolume != 2200 || buy.CPC != 1.5 || buy.KD != 44 {
+		t.Fatalf("buy=%+v", buy)
+	}
+	cheap := got["cheap widgets"]
+	if cheap.SearchVolume != 80 || cheap.KD != 12 {
+		t.Fatalf("cheap=%+v", cheap)
+	}
+}
+
+func TestKeywordOverviewUnconfigured(t *testing.T) {
+	svc := NewDataForSEOService("", "")
+	_, err := svc.KeywordOverview(context.Background(), []string{"widgets"})
+	if err != ErrDataForSEONotConfigured {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestKeywordOverviewOmitsMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"keyword":"known","keyword_info":{"search_volume":9,"cpc":0.4}}]}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.KeywordOverview(context.Background(), []string{"known", "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["unknown"]; ok {
+		t.Fatal("missing keyword must not be invented")
+	}
+	if got["known"].SearchVolume != 9 {
+		t.Fatalf("known=%+v", got["known"])
+	}
+}
+
 func TestAIVisibilityUnconfigured(t *testing.T) {
 	svc := NewDataForSEOService("", "")
 	_, err := svc.AIVisibility(context.Background(), "example.com")

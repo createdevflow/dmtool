@@ -52,6 +52,8 @@ export default function KeywordsPage() {
   const [seed, setSeed] = useState("");
   const [source, setSource] = useState("");
   const [ideas, setIdeas] = useState<any[]>([]);
+  const [labsConfigured, setLabsConfigured] = useState(false);
+  const [message, setMessage] = useState("");
   const [filter, setFilter] = useState<"all" | "easy" | "medium" | "hard">("all");
 
   useEffect(() => {
@@ -67,6 +69,8 @@ export default function KeywordsPage() {
           setKeywords(data?.keywords ?? (Array.isArray(data) ? data : []));
           setSource(data?.source ?? "");
           setIdeas(Array.isArray(data?.ideas) ? data.ideas : []);
+          setLabsConfigured(!!data?.labs_configured);
+          setMessage(typeof data?.message === "string" ? data.message : "");
         }
       } catch (err) {
         console.error(err);
@@ -95,6 +99,8 @@ export default function KeywordsPage() {
       });
       setSource(data?.source ?? "autocomplete");
       setIdeas(Array.isArray(data?.ideas) ? data.ideas : []);
+      setLabsConfigured(!!data?.labs_configured);
+      setMessage(typeof data?.message === "string" ? data.message : "");
       setSeed("");
     } catch (err) {
       console.error(err);
@@ -105,9 +111,9 @@ export default function KeywordsPage() {
 
   const handleExportCSV = () => {
     if (!keywords.length) return;
-    const header = "Keyword,Impressions (GSC not search volume),Clicks,Difficulty,Position,Intent,Source\n";
+    const header = "Keyword,Search volume (Labs),CPC,Impressions (GSC),Clicks,Difficulty,Position,Intent,Source\n";
     const rows = keywords.map((k: any) =>
-      `"${k.keyword}",${k.impressions ?? k.volume ?? 0},${k.clicks ?? 0},${k.kd},${k.position > 0 ? k.position.toFixed(1) : "—"},${k.intent ?? ""},${k.seed ?? ""}`
+      `"${k.keyword}",${k.labs_enriched ? (k.search_volume ?? 0) : ""},${k.labs_enriched && k.cpc > 0 ? k.cpc : ""},${k.impressions ?? k.volume ?? 0},${k.clicks ?? 0},${k.kd || ""},${k.position > 0 ? k.position.toFixed(1) : ""},${k.intent ?? ""},${k.seed ?? ""}`
     ).join("\n");
     const blob = new Blob([header + rows], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -131,7 +137,7 @@ export default function KeywordsPage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Keyword Research</h1>
             <p className="text-slate-500 mt-1">
-              GSC queries when connected; otherwise Google autocomplete. Impressions are not search volume.
+              {message || "GSC queries when connected; otherwise Google autocomplete. Impressions are not search volume."}
               {source && (
                 <span className="ml-2 inline-flex items-center gap-1 text-xs text-slate-400">
                   {source === "gsc" ? (
@@ -205,7 +211,9 @@ export default function KeywordsPage() {
                 <p className="text-slate-400 text-sm mt-1 max-w-xs">
                   {source === "gsc"
                     ? "Connect Google Search Console to see your real organic keywords."
-                    : "Enter a seed keyword above to generate suggestions from Google."}
+                    : labsConfigured
+                      ? "Enter a seed and Generate. That loads DataForSEO Labs volume, CPC, and difficulty. Page load does not spend credits."
+                      : "Enter a seed keyword above to generate suggestions from Google. Search volume stays empty until DataForSEO is connected."}
                 </p>
               </div>
             ) : (
@@ -213,6 +221,8 @@ export default function KeywordsPage() {
                 <thead>
                   <tr className="text-slate-400 border-b border-slate-50 bg-slate-50/30">
                     <th className="text-left font-semibold py-4 pl-6 text-[10px] uppercase tracking-widest">Keyword</th>
+                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Search volume</th>
+                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">CPC</th>
                     <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Impressions</th>
                     <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Clicks</th>
                     <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Intent</th>
@@ -237,6 +247,12 @@ export default function KeywordsPage() {
                           {kw.seed && kw.seed !== kw.keyword && (
                             <div className="text-[10px] text-slate-400 mt-0.5">seed: {kw.seed}</div>
                           )}
+                        </td>
+                        <td className="py-4 font-mono text-slate-700 font-semibold">
+                          {kw.labs_enriched ? formatImpressions(kw.search_volume ?? 0) : "—"}
+                        </td>
+                        <td className="py-4 font-mono text-slate-700 font-semibold">
+                          {kw.labs_enriched && Number(kw.cpc) > 0 ? `$${Number(kw.cpc).toFixed(2)}` : "—"}
                         </td>
                         <td className="py-4 font-mono text-slate-700 font-semibold">
                           {(kw.impressions ?? kw.volume) ? formatImpressions(kw.impressions ?? kw.volume) : "—"}

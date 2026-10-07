@@ -77,6 +77,9 @@ func RunMigrations(database *gorm.DB) error {
 	if err := addTaskPipelineStatusColumn(migrator); err != nil {
 		return err
 	}
+	if err := addKeywordLabsColumns(migrator); err != nil {
+		return err
+	}
 
 	// Idempotent seed. Re-runs are no-ops because we use ON CONFLICT.
 	if err := SeedPlans(database); err != nil {
@@ -137,6 +140,30 @@ func addKeywordClicksColumn(migrator gorm.Migrator) error {
 		return err
 	}
 	log.Println("[migrate] added column keyword_results.clicks")
+	return nil
+}
+
+func addKeywordLabsColumns(migrator gorm.Migrator) error {
+	if !migrator.HasTable("keyword_results") {
+		return nil
+	}
+	cols := []struct {
+		field string
+		col   string
+	}{
+		{"SearchVolume", "search_volume"},
+		{"CPC", "cpc"},
+		{"LabsEnriched", "labs_enriched"},
+	}
+	for _, c := range cols {
+		if migrator.HasColumn(&models.KeywordResult{}, c.col) {
+			continue
+		}
+		if err := migrator.AddColumn(&models.KeywordResult{}, c.field); err != nil {
+			return err
+		}
+		log.Printf("[migrate] added column keyword_results.%s\n", c.col)
+	}
 	return nil
 }
 

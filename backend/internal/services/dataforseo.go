@@ -22,6 +22,7 @@ const (
 	DataForSEOLanguage     = "en"
 	rankedKeywordLimit     = 15
 	competitorLimit        = 8
+	keywordOverviewLimit   = 30
 )
 
 // ErrDataForSEONotConfigured is returned when login/password are empty.
@@ -32,6 +33,7 @@ type DataForSEOService interface {
 	FetchEstimatedTraffic(siteURL string) ([]models.Metric, error)
 	DomainExplorer(ctx context.Context, domain string) (DomainExplorerResult, error)
 	AIVisibility(ctx context.Context, domain string) (AIVisibilityResult, error)
+	KeywordOverview(ctx context.Context, keywords []string) (map[string]KeywordLabsMetrics, error)
 }
 
 type dataForSEO struct {
@@ -133,6 +135,71 @@ func (s *dataForSEO) AIVisibility(ctx context.Context, domain string) (AIVisibil
 		out.CitationsOK = true
 	}
 	return out, nil
+}
+
+// KeywordOverview returns Labs search volume, CPC, and KD for the given
+// keywords (Google United States). Missing keywords are omitted — zeros
+// are not invented. Results are not written to dashboard metrics.
+func (s *dataForSEO) KeywordOverview(ctx context.Context, keywords []string) (map[string]KeywordLabsMetrics, error) {
+	out := map[string]KeywordLabsMetrics{}
+	if !s.Configured() {
+		return out, ErrDataForSEONotConfigured
+	}
+	cleaned := uniqueKeywordList(keywords, keywordOverviewLimit)
+	if len(cleaned) == 0 {
+		return out, nil
+	}
+	raw, err := s.postLive(ctx, "/v3/dataforseo_labs/google/keyword_overview/live", map[string]any{
+		"keywords":          cleaned,
+		"location_code":     DataForSEOLocation,
+		"language_code":     DataForSEOLanguage,
+		"include_serp_info": false,
+	})
+	if err != nil {
+		return out, err
+	}
+	var wrap []struct {
+		Items []keywordOverviewRow `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return out, err
+	}
+	if len(wrap) == 0 {
+		return out, nil
+	}
+	for _, item := range wrap[0].Items {
+		kw := strings.ToLower(strings.TrimSpace(item.Keyword))
+		if kw == "" {
+			continue
+		}
+		kd := item.KeywordProperties.KeywordDifficulty
+		if kd == 0 {
+			kd = item.KeywordInfo.KeywordDifficulty
+		}
+		out[kw] = KeywordLabsMetrics{
+			SearchVolume: item.KeywordInfo.SearchVolume,
+			CPC:          item.KeywordInfo.CPC,
+			KD:           kd,
+		}
+	}
+	return out, nil
+}
+
+func uniqueKeywordList(keywords []string, limit int) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, limit)
+	for _, raw := range keywords {
+		kw := strings.ToLower(strings.TrimSpace(raw))
+		if kw == "" || seen[kw] || len(kw) > 80 {
+			continue
+		}
+		seen[kw] = true
+		out = append(out, kw)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func (s *dataForSEO) fillLLMTargetMetrics(ctx context.Context, host, scope string, dest *LLMMetrics) error {
@@ -591,6 +658,24 @@ type LLMSourceDomain struct {
 	Domain         string `json:"domain"`
 	Mentions       int    `json:"mentions"`
 	AISearchVolume int    `json:"ai_search_volume"`
+}
+
+type KeywordLabsMetrics struct {
+	SearchVolume int     `json:"search_volume"`
+	CPC          float64 `json:"cpc"`
+	KD           int     `json:"kd"`
+}
+
+type keywordOverviewRow struct {
+	Keyword     string `json:"keyword"`
+	KeywordInfo struct {
+		SearchVolume      int     `json:"search_volume"`
+		CPC               float64 `json:"cpc"`
+		KeywordDifficulty int     `json:"keyword_difficulty"`
+	} `json:"keyword_info"`
+	KeywordProperties struct {
+		KeywordDifficulty int `json:"keyword_difficulty"`
+	} `json:"keyword_properties"`
 }
 
 type llmMetricGroup struct {

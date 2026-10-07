@@ -571,6 +571,9 @@ export type KeywordResult = {
   volume: number;
   impressions?: number;
   clicks?: number;
+  search_volume?: number;
+  cpc?: number;
+  labs_enriched?: boolean;
   kd: number;
   position: number;
   intent?: string;

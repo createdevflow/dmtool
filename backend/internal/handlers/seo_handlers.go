@@ -164,10 +164,10 @@ func (h *SEOHandler) Keywords(c *gin.Context) {
 		seed = extractDomainKeyword(project.URL)
 	}
 
-	// Check cache
+	// Check cache. GET never calls DataForSEO — Labs volume is loaded on Generate.
 	cached, fresh, _ := h.seoRepo.FindKeywords(pid, seed)
 	if fresh && len(cached) > 0 {
-		utils.Success(c, gin.H{"keywords": keywordPublicList(cached), "ideas": ideasForKeywordSource(cached, "cache"), "source": "cache", "seed": seed}, nil)
+		utils.Success(c, keywordListJSON(cached, "cache", seed, h.dataForSEOReady()), nil)
 		return
 	}
 
@@ -177,13 +177,7 @@ func (h *SEOHandler) Keywords(c *gin.Context) {
 		h.seoRepo.UpsertKeywords(keywords)
 	}
 
-	utils.Success(c, gin.H{
-		"keywords": keywordPublicList(keywords),
-		"ideas":    ideasForKeywordSource(keywords, source),
-		"source":   source,
-		"seed":     seed,
-		"count":    len(keywords),
-	}, nil)
+	utils.Success(c, keywordListJSON(keywords, source, seed, h.dataForSEOReady()), nil)
 }
 
 // KeywordsPost handles POST /seo/keywords with body {project_id, seed}
@@ -212,23 +206,22 @@ func (h *SEOHandler) KeywordsPost(c *gin.Context) {
 
 	cached, fresh, _ := h.seoRepo.FindKeywords(req.ProjectID, seed)
 	if fresh && len(cached) > 0 {
-		utils.Success(c, gin.H{"keywords": keywordPublicList(cached), "ideas": ideasForKeywordSource(cached, "cache"), "source": "cache", "seed": seed}, nil)
+		if h.dataForSEOReady() && !keywordsLabsEnriched(cached) {
+			cached = h.enrichKeywordsLabs(c.Request.Context(), cached)
+			_ = h.seoRepo.UpsertKeywords(cached)
+		}
+		utils.Success(c, keywordListJSON(cached, "cache", seed, h.dataForSEOReady()), nil)
 		return
 	}
 
 	keywords, source := h.resolveKeywords(req.ProjectID, seed, project.URL, userID)
+	keywords = h.enrichKeywordsLabs(c.Request.Context(), keywords)
 
 	if len(keywords) > 0 {
 		h.seoRepo.UpsertKeywords(keywords)
 	}
 
-	utils.Success(c, gin.H{
-		"keywords": keywordPublicList(keywords),
-		"ideas":    ideasForKeywordSource(keywords, source),
-		"source":   source,
-		"seed":     seed,
-		"count":    len(keywords),
-	}, nil)
+	utils.Success(c, keywordListJSON(keywords, source, seed, h.dataForSEOReady()), nil)
 }
 
 // resolveKeywords tries GSC first, then falls back to autocomplete.
@@ -444,18 +437,77 @@ func keywordPublicList(kws []models.KeywordResult) []gin.H {
 	out := make([]gin.H, 0, len(kws))
 	for _, k := range kws {
 		out = append(out, gin.H{
-			"id":          k.ID,
-			"keyword":     k.Keyword,
-			"seed":        k.Seed,
-			"volume":      k.Volume,
-			"impressions": k.Volume,
-			"clicks":      k.Clicks,
-			"kd":          k.KD,
-			"position":    k.Position,
-			"intent":      services.GuessSearchIntent(k.Keyword),
+			"id":            k.ID,
+			"keyword":       k.Keyword,
+			"seed":          k.Seed,
+			"volume":        k.Volume,
+			"impressions":   k.Volume,
+			"clicks":        k.Clicks,
+			"search_volume": k.SearchVolume,
+			"cpc":           k.CPC,
+			"labs_enriched": k.LabsEnriched,
+			"kd":            k.KD,
+			"position":      k.Position,
+			"intent":        services.GuessSearchIntent(k.Keyword),
 		})
 	}
 	return out
+}
+
+func keywordListJSON(kws []models.KeywordResult, source, seed string, labsConfigured bool) gin.H {
+	msg := "Impressions are Google Search Console, not search volume."
+	if labsConfigured {
+		msg = "Search volume, CPC, and difficulty are DataForSEO Labs (Google United States). Impressions stay Search Console. Generate spends vendor credits; results cache 24 hours."
+	} else {
+		msg = "DataForSEO is not connected. Search volume, CPC, and difficulty stay empty. Impressions are Search Console when present."
+	}
+	return gin.H{
+		"keywords":        keywordPublicList(kws),
+		"ideas":           ideasForKeywordSource(kws, source),
+		"source":          source,
+		"seed":            seed,
+		"count":           len(kws),
+		"labs_configured": labsConfigured,
+		"message":         msg,
+	}
+}
+
+func keywordsLabsEnriched(kws []models.KeywordResult) bool {
+	if len(kws) == 0 {
+		return false
+	}
+	for _, k := range kws {
+		if !k.LabsEnriched {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *SEOHandler) enrichKeywordsLabs(ctx context.Context, kws []models.KeywordResult) []models.KeywordResult {
+	if !h.dataForSEOReady() || len(kws) == 0 {
+		return kws
+	}
+	names := make([]string, 0, len(kws))
+	for _, k := range kws {
+		names = append(names, k.Keyword)
+	}
+	metrics, err := h.dataForSEOSvc.KeywordOverview(ctx, names)
+	if err != nil {
+		log.Printf("[seo] keyword overview: %v", err)
+		return kws
+	}
+	for i := range kws {
+		kws[i].LabsEnriched = true
+		m, ok := metrics[strings.ToLower(strings.TrimSpace(kws[i].Keyword))]
+		if !ok {
+			continue
+		}
+		kws[i].SearchVolume = m.SearchVolume
+		kws[i].CPC = m.CPC
+		kws[i].KD = m.KD
+	}
+	return kws
 }
 
 func ideasForKeywordSource(kws []models.KeywordResult, source string) []gin.H {

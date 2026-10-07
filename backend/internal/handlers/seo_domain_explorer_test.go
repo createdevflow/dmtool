@@ -16,10 +16,12 @@ import (
 )
 
 type configuredDFS struct {
-	result   services.DomainExplorerResult
-	aiResult services.AIVisibilityResult
-	err      error
-	calls    int
+	result        services.DomainExplorerResult
+	aiResult      services.AIVisibilityResult
+	labs          map[string]services.KeywordLabsMetrics
+	err           error
+	calls         int
+	overviewCalls int
 }
 
 func (f *configuredDFS) Configured() bool { return true }
@@ -33,6 +35,16 @@ func (f *configuredDFS) DomainExplorer(_ context.Context, _ string) (services.Do
 func (f *configuredDFS) AIVisibility(_ context.Context, _ string) (services.AIVisibilityResult, error) {
 	f.calls++
 	return f.aiResult, f.err
+}
+func (f *configuredDFS) KeywordOverview(_ context.Context, _ []string) (map[string]services.KeywordLabsMetrics, error) {
+	f.overviewCalls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.labs == nil {
+		return map[string]services.KeywordLabsMetrics{}, nil
+	}
+	return f.labs, nil
 }
 
 func TestDomainExplorerUnconfigured(t *testing.T) {

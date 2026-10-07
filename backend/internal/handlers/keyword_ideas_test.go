@@ -86,4 +86,7 @@ func TestKeywordPublicListIntent(t *testing.T) {
 	if out[0]["kd"] != 0 {
 		t.Fatalf("kd=%v want 0", out[0]["kd"])
 	}
+	if out[0]["search_volume"] != 0 {
+		t.Fatalf("search_volume=%v want 0 until Labs enrich", out[0]["search_volume"])
+	}
 }

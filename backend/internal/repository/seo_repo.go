@@ -28,6 +28,9 @@ type SEORepository interface {
 
 	FindVendorAIVisibilitySnapshot(domain string, locationCode int, languageCode string) (*models.VendorAIVisibilitySnapshot, error)
 	SaveVendorAIVisibilitySnapshot(row *models.VendorAIVisibilitySnapshot) error
+
+	FindVendorKeywordGapSnapshot(target, competitor string, locationCode int, languageCode string) (*models.VendorKeywordGapSnapshot, error)
+	SaveVendorKeywordGapSnapshot(row *models.VendorKeywordGapSnapshot) error
 }
 
 type gormSEORepository struct {
@@ -173,6 +176,35 @@ func (r *gormSEORepository) SaveVendorAIVisibilitySnapshot(row *models.VendorAIV
 	}
 	var existing models.VendorAIVisibilitySnapshot
 	err := r.db.Where("domain = ? AND location_code = ? AND language_code = ?", row.Domain, row.LocationCode, row.LanguageCode).
+		First(&existing).Error
+	if err == nil {
+		existing.Source = row.Source
+		existing.Payload = row.Payload
+		existing.FetchedAt = row.FetchedAt
+		return r.db.Save(&existing).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return r.db.Create(row).Error
+}
+
+func (r *gormSEORepository) FindVendorKeywordGapSnapshot(target, competitor string, locationCode int, languageCode string) (*models.VendorKeywordGapSnapshot, error) {
+	var row models.VendorKeywordGapSnapshot
+	err := r.db.Where("target = ? AND competitor = ? AND location_code = ? AND language_code = ?", target, competitor, locationCode, languageCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *gormSEORepository) SaveVendorKeywordGapSnapshot(row *models.VendorKeywordGapSnapshot) error {
+	if row == nil {
+		return nil
+	}
+	var existing models.VendorKeywordGapSnapshot
+	err := r.db.Where("target = ? AND competitor = ? AND location_code = ? AND language_code = ?", row.Target, row.Competitor, row.LocationCode, row.LanguageCode).
 		First(&existing).Error
 	if err == nil {
 		existing.Source = row.Source

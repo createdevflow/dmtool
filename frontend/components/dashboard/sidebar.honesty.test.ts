@@ -15,6 +15,7 @@ describe("navGroups honesty", () => {
     const hrefs = navGroups.flatMap((g) => g.items.map((i) => i.href));
     expect(hrefs).toContain("/seo/backlinks");
     expect(hrefs).toContain("/seo/ai-visibility");
+    expect(hrefs).toContain("/seo/keyword-gap");
     expect(hrefs).not.toContain("/ai/visual");
     expect(hrefs).not.toContain("/social/competitors");
   });

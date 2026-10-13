@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Globe,
   Sparkles,
+  GitCompare,
   Link as LinkIcon,
   CreditCard,
   Blocks,
@@ -85,6 +86,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { name: "Site Explorer", href: "/seo/site-explorer", icon: Globe },
       { name: "Keyword Research", href: "/seo/keywords", icon: Search },
+      { name: "Keyword Gap", href: "/seo/keyword-gap", icon: GitCompare },
       { name: "Rank Tracking", href: "/seo/rank-tracking", icon: TrendingUp },
       { name: "Backlinks", href: "/seo/backlinks", icon: LinkIcon },
       { name: "AI Visibility", href: "/seo/ai-visibility", icon: Sparkles },

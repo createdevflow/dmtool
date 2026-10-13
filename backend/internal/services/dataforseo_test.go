@@ -216,6 +216,92 @@ func TestAIVisibilitySectionErrorDoesNotInvent(t *testing.T) {
 	}
 }
 
+func TestKeywordGapUnconfigured(t *testing.T) {
+	svc := NewDataForSEOService("", "")
+	_, err := svc.KeywordGap(context.Background(), "example.com", "rival.com")
+	if err != ErrDataForSEONotConfigured {
+		t.Fatalf("err=%v want ErrDataForSEONotConfigured", err)
+	}
+}
+
+func TestKeywordGapSameDomainRejected(t *testing.T) {
+	svc := &dataForSEO{login: "u", password: "p"}
+	_, err := svc.KeywordGap(context.Background(), "https://www.example.com", "example.com")
+	if err == nil || !strings.Contains(err.Error(), "different domain") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestKeywordGapParsesMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "domain_intersection") {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(body), `"intersections":false`) {
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"keyword_data":{"keyword":"buy widgets","keyword_info":{"search_volume":2200,"cpc":1.5},"keyword_properties":{"keyword_difficulty":44}},"first_domain_serp_element":{"rank_group":3},"second_domain_serp_element":{"rank_group":0}}]}]}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"keyword_data":{"keyword":"cheap widgets","keyword_info":{"search_volume":800,"cpc":0.4},"keyword_properties":{"keyword_difficulty":12}},"first_domain_serp_element":{"rank_group":5},"second_domain_serp_element":{"rank_group":8}}]}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := &dataForSEO{login: "user", password: "pass", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.KeywordGap(context.Background(), "https://www.example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Target != "example.com" || got.Competitor != "rival.com" {
+		t.Fatalf("hosts=%s/%s", got.Target, got.Competitor)
+	}
+	if !got.MissingOK || len(got.Missing) != 1 {
+		t.Fatalf("missing=%+v ok=%v err=%s", got.Missing, got.MissingOK, got.MissingError)
+	}
+	miss := got.Missing[0]
+	if miss.Keyword != "buy widgets" || miss.Volume != 2200 || miss.KD != 44 || miss.TargetPosition != 0 || miss.CompetitorPosition != 3 {
+		t.Fatalf("missing row=%+v", miss)
+	}
+	if miss.Intent != "transactional" {
+		t.Fatalf("missing intent=%s", miss.Intent)
+	}
+	if !got.OverlapOK || len(got.Overlap) != 1 {
+		t.Fatalf("overlap=%+v ok=%v err=%s", got.Overlap, got.OverlapOK, got.OverlapError)
+	}
+	over := got.Overlap[0]
+	if over.Keyword != "cheap widgets" || over.Volume != 800 || over.TargetPosition != 5 || over.CompetitorPosition != 8 {
+		t.Fatalf("overlap row=%+v", over)
+	}
+}
+
+func TestKeywordGapSectionErrorDoesNotInvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(body), `"intersections":true`) {
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"keyword_data":{"keyword":"widgets","keyword_info":{"search_volume":10}},"first_domain_serp_element":{"rank_group":2}}]}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.KeywordGap(context.Background(), "example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.MissingOK || len(got.Missing) != 1 || got.Missing[0].Keyword != "widgets" {
+		t.Fatalf("missing=%+v", got.Missing)
+	}
+	if got.OverlapOK || len(got.Overlap) != 0 {
+		t.Fatalf("overlap should be empty on error, got %+v ok=%v", got.Overlap, got.OverlapOK)
+	}
+	if got.OverlapError == "" {
+		t.Fatal("expected overlap_error")
+	}
+}
+
 func TestPostLiveTaskError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))

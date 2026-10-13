@@ -1143,3 +1143,175 @@ func (h *SEOHandler) loadAIVisibility(ctx context.Context, domain string, refres
 	}
 	return result, false, nil
 }
+
+// KeywordGap returns DataForSEO Labs domain-intersection keywords for a
+// target/competitor pair. Cache-only unless fetch=1 or refresh=1. Does not
+// write vendor counts into dashboard metrics.
+func (h *SEOHandler) KeywordGap(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	domain := c.Query("domain")
+	if domain == "" {
+		domain = project.URL
+	}
+	competitor := strings.TrimSpace(c.Query("competitor"))
+	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
+	wantFetch := refresh || c.Query("fetch") == "1" || strings.EqualFold(c.Query("fetch"), "true")
+	host := services.NormalizeDomain(domain)
+	rival := services.NormalizeDomain(competitor)
+
+	if !h.dataForSEOReady() {
+		utils.Success(c, keywordGapEmptyJSON(host, rival, false, "DataForSEO is not connected. Set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD."), nil)
+		return
+	}
+
+	if rival == "" {
+		utils.Success(c, keywordGapEmptyJSON(host, "", true, "Enter a competitor domain to look up keyword overlap. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+	if host == "" {
+		utils.Success(c, keywordGapEmptyJSON("", rival, true, "invalid domain"), nil)
+		return
+	}
+	if host == rival {
+		utils.Success(c, keywordGapEmptyJSON(host, rival, true, "competitor must be a different domain"), nil)
+		return
+	}
+
+	if !wantFetch {
+		if cached, ok := h.cachedKeywordGap(host, rival); ok {
+			utils.Success(c, keywordGapJSON(cached, true), nil)
+			return
+		}
+		utils.Success(c, keywordGapEmptyJSON(host, rival, true, "Click Look up to query DataForSEO Labs domain intersection. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+
+	result, cached, err := h.loadKeywordGap(c.Request.Context(), host, rival, refresh)
+	if err != nil {
+		if errors.Is(err, services.ErrDataForSEONotConfigured) {
+			utils.Success(c, keywordGapEmptyJSON(host, rival, false, "DataForSEO is not connected."), nil)
+			return
+		}
+		utils.Success(c, keywordGapEmptyJSON(host, rival, true, err.Error()), nil)
+		return
+	}
+	result.Cached = cached
+	utils.Success(c, keywordGapJSON(result, cached), nil)
+}
+
+func keywordGapEmptyJSON(target, competitor string, configured bool, message string) gin.H {
+	return gin.H{
+		"available":  false,
+		"configured": configured,
+		"source":     "dataforseo",
+		"target":     target,
+		"competitor": competitor,
+		"missing":    []services.GapKeyword{},
+		"overlap":    []services.GapKeyword{},
+		"missing_ok": false,
+		"overlap_ok": false,
+		"message":    message,
+	}
+}
+
+func keywordGapJSON(result services.KeywordGapResult, cached bool) gin.H {
+	missing := result.Missing
+	if missing == nil {
+		missing = []services.GapKeyword{}
+	}
+	overlap := result.Overlap
+	if overlap == nil {
+		overlap = []services.GapKeyword{}
+	}
+	return gin.H{
+		"available":     result.HasAnyData(),
+		"configured":    true,
+		"source":        result.Source,
+		"target":        result.Target,
+		"competitor":    result.Competitor,
+		"location_code": result.LocationCode,
+		"location_name": result.LocationName,
+		"language_code": result.LanguageCode,
+		"missing":       missing,
+		"missing_ok":    result.MissingOK,
+		"missing_error": result.MissingError,
+		"overlap":       overlap,
+		"overlap_ok":    result.OverlapOK,
+		"overlap_error": result.OverlapError,
+		"cached":        cached,
+		"fetched_at":    result.FetchedAt.Format(time.RFC3339),
+		"message":       "DataForSEO Labs domain intersection (United States, English). Missing = they rank, you do not. Overlap = both rank. Not Search Console.",
+	}
+}
+
+func (h *SEOHandler) cachedKeywordGap(target, competitor string) (services.KeywordGapResult, bool) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" || h.seoRepo == nil {
+		return services.KeywordGapResult{}, false
+	}
+	snap, err := h.seoRepo.FindVendorKeywordGapSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+	if err != nil || snap == nil || snap.Payload == "" {
+		return services.KeywordGapResult{}, false
+	}
+	var cached services.KeywordGapResult
+	if json.Unmarshal([]byte(snap.Payload), &cached) != nil || !cached.HasAnyData() {
+		return services.KeywordGapResult{}, false
+	}
+	cached.Cached = true
+	return cached, true
+}
+
+func (h *SEOHandler) loadKeywordGap(ctx context.Context, target, competitor string, refresh bool) (services.KeywordGapResult, bool, error) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return services.KeywordGapResult{}, false, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return services.KeywordGapResult{}, false, fmt.Errorf("competitor must be a different domain")
+	}
+	if h.seoRepo != nil && !refresh {
+		snap, err := h.seoRepo.FindVendorKeywordGapSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+		if err == nil && snap != nil && time.Since(snap.FetchedAt) < vendorSnapshotTTL && snap.Payload != "" {
+			var cached services.KeywordGapResult
+			if json.Unmarshal([]byte(snap.Payload), &cached) == nil && cached.HasAnyData() {
+				cached.Cached = true
+				return cached, true, nil
+			}
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[seo] keyword gap snapshot read: %v", err)
+		}
+	}
+
+	result, err := h.dataForSEOSvc.KeywordGap(ctx, host, rival)
+	if err != nil {
+		return result, false, err
+	}
+	if h.seoRepo != nil && result.HasAnyData() {
+		raw, _ := json.Marshal(result)
+		_ = h.seoRepo.SaveVendorKeywordGapSnapshot(&models.VendorKeywordGapSnapshot{
+			Target:       result.Target,
+			Competitor:   result.Competitor,
+			LocationCode: result.LocationCode,
+			LanguageCode: result.LanguageCode,
+			Source:       result.Source,
+			Payload:      string(raw),
+			FetchedAt:    result.FetchedAt,
+		})
+	}
+	return result, false, nil
+}

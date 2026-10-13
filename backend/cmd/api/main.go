@@ -420,6 +420,7 @@ func registerSEORoutes(
 	g.GET("/seo/backlinks", h.Backlinks)
 	g.GET("/seo/domain-explorer", h.DomainExplorer)
 	g.GET("/seo/ai-visibility", h.AIVisibility)
+	g.GET("/seo/keyword-gap", h.KeywordGap)
 }
 
 func registerSocialRoutes(

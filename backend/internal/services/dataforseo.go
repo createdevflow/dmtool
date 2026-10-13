@@ -34,6 +34,7 @@ type DataForSEOService interface {
 	DomainExplorer(ctx context.Context, domain string) (DomainExplorerResult, error)
 	AIVisibility(ctx context.Context, domain string) (AIVisibilityResult, error)
 	KeywordOverview(ctx context.Context, keywords []string) (map[string]KeywordLabsMetrics, error)
+	KeywordGap(ctx context.Context, target, competitor string) (KeywordGapResult, error)
 }
 
 type dataForSEO struct {
@@ -181,6 +182,150 @@ func (s *dataForSEO) KeywordOverview(ctx context.Context, keywords []string) (ma
 			CPC:          item.KeywordInfo.CPC,
 			KD:           kd,
 		}
+	}
+	return out, nil
+}
+
+// KeywordGap compares two domains via Labs domain_intersection (Google US).
+// Missing = competitor ranks and target does not. Overlap = both rank.
+// Sections fail independently. Results are not written to dashboard metrics.
+func (s *dataForSEO) KeywordGap(ctx context.Context, target, competitor string) (KeywordGapResult, error) {
+	out := KeywordGapResult{
+		Source:       "dataforseo",
+		LocationCode: DataForSEOLocation,
+		LocationName: DataForSEOLocationName,
+		LanguageCode: DataForSEOLanguage,
+		FetchedAt:    time.Now().UTC(),
+		Missing:      []GapKeyword{},
+		Overlap:      []GapKeyword{},
+	}
+	if !s.Configured() {
+		return out, ErrDataForSEONotConfigured
+	}
+	host := NormalizeDomain(target)
+	rival := NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return out, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return out, fmt.Errorf("competitor must be a different domain")
+	}
+	out.Target = host
+	out.Competitor = rival
+
+	if err := s.fillKeywordGapMissing(ctx, host, rival, &out); err != nil {
+		out.MissingError = err.Error()
+	} else {
+		out.MissingOK = true
+	}
+	if err := s.fillKeywordGapOverlap(ctx, host, rival, &out); err != nil {
+		out.OverlapError = err.Error()
+	} else {
+		out.OverlapOK = true
+	}
+	return out, nil
+}
+
+func (s *dataForSEO) fillKeywordGapMissing(ctx context.Context, host, rival string, out *KeywordGapResult) error {
+	raw, err := s.postLive(ctx, "/v3/dataforseo_labs/google/domain_intersection/live", map[string]any{
+		"target1":       rival,
+		"target2":       host,
+		"location_code": DataForSEOLocation,
+		"language_code": DataForSEOLanguage,
+		"intersections": false,
+		"item_types":    []string{"organic"},
+		"limit":         rankedKeywordLimit,
+		"order_by":      []string{"keyword_data.keyword_info.search_volume,desc"},
+	})
+	if err != nil {
+		return err
+	}
+	rows, err := parseGapItems(raw)
+	if err != nil {
+		return err
+	}
+	out.Missing = make([]GapKeyword, 0, len(rows))
+	for _, row := range rows {
+		if row.Keyword == "" {
+			continue
+		}
+		out.Missing = append(out.Missing, GapKeyword{
+			Keyword:            row.Keyword,
+			Volume:             row.Volume,
+			CPC:                row.CPC,
+			KD:                 row.KD,
+			TargetPosition:     0,
+			CompetitorPosition: row.FirstRank,
+			Intent:             GuessSearchIntent(row.Keyword),
+		})
+	}
+	return nil
+}
+
+func (s *dataForSEO) fillKeywordGapOverlap(ctx context.Context, host, rival string, out *KeywordGapResult) error {
+	raw, err := s.postLive(ctx, "/v3/dataforseo_labs/google/domain_intersection/live", map[string]any{
+		"target1":       host,
+		"target2":       rival,
+		"location_code": DataForSEOLocation,
+		"language_code": DataForSEOLanguage,
+		"intersections": true,
+		"item_types":    []string{"organic"},
+		"limit":         rankedKeywordLimit,
+		"order_by":      []string{"keyword_data.keyword_info.search_volume,desc"},
+	})
+	if err != nil {
+		return err
+	}
+	rows, err := parseGapItems(raw)
+	if err != nil {
+		return err
+	}
+	out.Overlap = make([]GapKeyword, 0, len(rows))
+	for _, row := range rows {
+		if row.Keyword == "" {
+			continue
+		}
+		out.Overlap = append(out.Overlap, GapKeyword{
+			Keyword:            row.Keyword,
+			Volume:             row.Volume,
+			CPC:                row.CPC,
+			KD:                 row.KD,
+			TargetPosition:     row.FirstRank,
+			CompetitorPosition: row.SecondRank,
+			Intent:             GuessSearchIntent(row.Keyword),
+		})
+	}
+	return nil
+}
+
+func parseGapItems(raw json.RawMessage) ([]parsedGapRow, error) {
+	var wrap []struct {
+		Items []domainIntersectionRow `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return nil, err
+	}
+	if len(wrap) == 0 {
+		return []parsedGapRow{}, nil
+	}
+	out := make([]parsedGapRow, 0, len(wrap[0].Items))
+	for _, item := range wrap[0].Items {
+		kw := strings.TrimSpace(item.KeywordData.Keyword)
+		if kw == "" {
+			continue
+		}
+		kd := item.KeywordData.KeywordProperties.KeywordDifficulty
+		if kd == 0 {
+			kd = item.KeywordData.KeywordInfo.KeywordDifficulty
+		}
+		out = append(out, parsedGapRow{
+			Keyword:    kw,
+			Volume:     item.KeywordData.KeywordInfo.SearchVolume,
+			CPC:        item.KeywordData.KeywordInfo.CPC,
+			KD:         kd,
+			FirstRank:  item.FirstDomainSerpElement.RankGroup,
+			SecondRank: item.SecondDomainSerpElement.RankGroup,
+		})
 	}
 	return out, nil
 }
@@ -664,6 +809,66 @@ type KeywordLabsMetrics struct {
 	SearchVolume int     `json:"search_volume"`
 	CPC          float64 `json:"cpc"`
 	KD           int     `json:"kd"`
+}
+
+type KeywordGapResult struct {
+	Target       string       `json:"target"`
+	Competitor   string       `json:"competitor"`
+	Source       string       `json:"source"`
+	LocationCode int          `json:"location_code"`
+	LocationName string       `json:"location_name"`
+	LanguageCode string       `json:"language_code"`
+	Missing      []GapKeyword `json:"missing"`
+	MissingOK    bool         `json:"missing_ok"`
+	MissingError string       `json:"missing_error,omitempty"`
+	Overlap      []GapKeyword `json:"overlap"`
+	OverlapOK    bool         `json:"overlap_ok"`
+	OverlapError string       `json:"overlap_error,omitempty"`
+	FetchedAt    time.Time    `json:"fetched_at"`
+	Cached       bool         `json:"cached"`
+}
+
+func (r KeywordGapResult) HasAnyData() bool {
+	return r.MissingOK || r.OverlapOK
+}
+
+type GapKeyword struct {
+	Keyword            string  `json:"keyword"`
+	Volume             int     `json:"volume"`
+	CPC                float64 `json:"cpc"`
+	KD                 int     `json:"kd"`
+	TargetPosition     int     `json:"target_position"`
+	CompetitorPosition int     `json:"competitor_position"`
+	Intent             string  `json:"intent"`
+}
+
+type parsedGapRow struct {
+	Keyword    string
+	Volume     int
+	CPC        float64
+	KD         int
+	FirstRank  int
+	SecondRank int
+}
+
+type domainIntersectionRow struct {
+	KeywordData struct {
+		Keyword     string `json:"keyword"`
+		KeywordInfo struct {
+			SearchVolume      int     `json:"search_volume"`
+			CPC               float64 `json:"cpc"`
+			KeywordDifficulty int     `json:"keyword_difficulty"`
+		} `json:"keyword_info"`
+		KeywordProperties struct {
+			KeywordDifficulty int `json:"keyword_difficulty"`
+		} `json:"keyword_properties"`
+	} `json:"keyword_data"`
+	FirstDomainSerpElement struct {
+		RankGroup int `json:"rank_group"`
+	} `json:"first_domain_serp_element"`
+	SecondDomainSerpElement struct {
+		RankGroup int `json:"rank_group"`
+	} `json:"second_domain_serp_element"`
 }
 
 type keywordOverviewRow struct {

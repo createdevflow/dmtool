@@ -16,15 +16,16 @@ import (
 )
 
 type configuredDFS struct {
-	result        services.DomainExplorerResult
-	aiResult      services.AIVisibilityResult
-	gapResult     services.KeywordGapResult
-	compareResult services.DomainCompareResult
-	contentResult services.ContentGapResult
-	labs          map[string]services.KeywordLabsMetrics
-	err           error
-	calls         int
-	overviewCalls int
+	result         services.DomainExplorerResult
+	aiResult       services.AIVisibilityResult
+	gapResult      services.KeywordGapResult
+	compareResult  services.DomainCompareResult
+	contentResult  services.ContentGapResult
+	citationResult services.CitationGapResult
+	labs           map[string]services.KeywordLabsMetrics
+	err            error
+	calls          int
+	overviewCalls  int
 }
 
 func (f *configuredDFS) Configured() bool { return true }
@@ -60,6 +61,10 @@ func (f *configuredDFS) DomainCompare(_ context.Context, _, _ string) (services.
 func (f *configuredDFS) ContentGap(_ context.Context, _, _ string) (services.ContentGapResult, error) {
 	f.calls++
 	return f.contentResult, f.err
+}
+func (f *configuredDFS) CitationGap(_ context.Context, _, _ string) (services.CitationGapResult, error) {
+	f.calls++
+	return f.citationResult, f.err
 }
 
 func TestDomainExplorerUnconfigured(t *testing.T) {

@@ -37,6 +37,7 @@ type DataForSEOService interface {
 	KeywordGap(ctx context.Context, target, competitor string) (KeywordGapResult, error)
 	DomainCompare(ctx context.Context, target, competitor string) (DomainCompareResult, error)
 	ContentGap(ctx context.Context, target, competitor string) (ContentGapResult, error)
+	CitationGap(ctx context.Context, target, competitor string) (CitationGapResult, error)
 }
 
 type dataForSEO struct {
@@ -472,6 +473,66 @@ func (s *dataForSEO) fillContentGapPages(ctx context.Context, rival string, out 
 		})
 	}
 	return nil
+}
+
+// CitationGap compares LLM citation counts for two domains (Google AI
+// Overviews + ChatGPT, US/en). Sections fail independently. Unique sources
+// are co-cited with the competitor and not with the target when both
+// lookups succeed. Results are not written to dashboard metrics.
+func (s *dataForSEO) CitationGap(ctx context.Context, target, competitor string) (CitationGapResult, error) {
+	out := CitationGapResult{
+		Source:       "dataforseo",
+		LocationCode: DataForSEOLocation,
+		LocationName: DataForSEOLocationName,
+		LanguageCode: DataForSEOLanguage,
+		FetchedAt:    time.Now().UTC(),
+		TargetCitations: LLMMetrics{
+			Sources: []LLMSourceDomain{},
+		},
+		CompetitorCitations: LLMMetrics{
+			Sources: []LLMSourceDomain{},
+		},
+		UniqueSources: []LLMSourceDomain{},
+	}
+	if !s.Configured() {
+		return out, ErrDataForSEONotConfigured
+	}
+	host := NormalizeDomain(target)
+	rival := NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return out, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return out, fmt.Errorf("competitor must be a different domain")
+	}
+	out.Target = host
+	out.Competitor = rival
+
+	if err := s.fillLLMTargetMetrics(ctx, host, "sources", &out.TargetCitations); err != nil {
+		out.TargetError = err.Error()
+	} else {
+		out.TargetOK = true
+	}
+	if err := s.fillLLMTargetMetrics(ctx, rival, "sources", &out.CompetitorCitations); err != nil {
+		out.CompetitorError = err.Error()
+	} else {
+		out.CompetitorOK = true
+	}
+	if out.TargetOK && out.CompetitorOK {
+		ours := map[string]bool{host: true, rival: true}
+		for _, src := range out.TargetCitations.Sources {
+			if src.Domain != "" {
+				ours[src.Domain] = true
+			}
+		}
+		for _, src := range out.CompetitorCitations.Sources {
+			if src.Domain == "" || ours[src.Domain] {
+				continue
+			}
+			out.UniqueSources = append(out.UniqueSources, src)
+		}
+	}
+	return out, nil
 }
 
 func parseGapItems(raw json.RawMessage) ([]parsedGapRow, error) {
@@ -1058,6 +1119,28 @@ type ContentGapResult struct {
 
 func (r ContentGapResult) HasAnyData() bool {
 	return r.MissingOK || r.PagesOK
+}
+
+type CitationGapResult struct {
+	Target              string            `json:"target"`
+	Competitor          string            `json:"competitor"`
+	Source              string            `json:"source"`
+	LocationCode        int               `json:"location_code"`
+	LocationName        string            `json:"location_name"`
+	LanguageCode        string            `json:"language_code"`
+	TargetCitations     LLMMetrics        `json:"target_citations"`
+	TargetOK            bool              `json:"target_ok"`
+	TargetError         string            `json:"target_error,omitempty"`
+	CompetitorCitations LLMMetrics        `json:"competitor_citations"`
+	CompetitorOK        bool              `json:"competitor_ok"`
+	CompetitorError     string            `json:"competitor_error,omitempty"`
+	UniqueSources       []LLMSourceDomain `json:"unique_sources"`
+	FetchedAt           time.Time         `json:"fetched_at"`
+	Cached              bool              `json:"cached"`
+}
+
+func (r CitationGapResult) HasAnyData() bool {
+	return r.TargetOK || r.CompetitorOK
 }
 
 type ContentGapKeyword struct {

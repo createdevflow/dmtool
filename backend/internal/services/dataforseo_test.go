@@ -480,6 +480,87 @@ func TestContentGapSectionErrorDoesNotInvent(t *testing.T) {
 	}
 }
 
+func TestCitationGapUnconfigured(t *testing.T) {
+	svc := NewDataForSEOService("", "")
+	_, err := svc.CitationGap(context.Background(), "example.com", "rival.com")
+	if err != ErrDataForSEONotConfigured {
+		t.Fatalf("err=%v want ErrDataForSEONotConfigured", err)
+	}
+}
+
+func TestCitationGapSameDomainRejected(t *testing.T) {
+	svc := &dataForSEO{login: "u", password: "p"}
+	_, err := svc.CitationGap(context.Background(), "https://www.example.com", "example.com")
+	if err == nil || !strings.Contains(err.Error(), "different domain") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCitationGapParsesMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "llm_mentions/target_metrics") {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(body), `"domain":"rival.com"`) {
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"aggregated_metrics":{"platform":[{"key":"google","mentions":20,"ai_search_volume":700},{"key":"chat_gpt","mentions":5,"ai_search_volume":80}],"sources_domain":[{"key":"rival.com","mentions":20,"ai_search_volume":700},{"key":"other.com","mentions":7,"ai_search_volume":120},{"key":"extra.com","mentions":4,"ai_search_volume":50}],"total":{"mentions":25,"ai_search_volume":780}}}]}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"aggregated_metrics":{"platform":[{"key":"google","mentions":12,"ai_search_volume":400},{"key":"chat_gpt","mentions":3,"ai_search_volume":90}],"sources_domain":[{"key":"example.com","mentions":12,"ai_search_volume":400},{"key":"other.com","mentions":7,"ai_search_volume":120}],"total":{"mentions":15,"ai_search_volume":490}}}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := &dataForSEO{login: "user", password: "pass", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.CitationGap(context.Background(), "https://www.example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Target != "example.com" || got.Competitor != "rival.com" {
+		t.Fatalf("hosts=%s/%s", got.Target, got.Competitor)
+	}
+	if !got.TargetOK || got.TargetCitations.Mentions != 15 || got.TargetCitations.Google.Mentions != 12 {
+		t.Fatalf("target=%+v ok=%v err=%s", got.TargetCitations, got.TargetOK, got.TargetError)
+	}
+	if !got.CompetitorOK || got.CompetitorCitations.Mentions != 25 {
+		t.Fatalf("competitor=%+v", got.CompetitorCitations)
+	}
+	if len(got.UniqueSources) != 1 || got.UniqueSources[0].Domain != "extra.com" {
+		t.Fatalf("unique_sources=%+v (shared other.com and both hosts must be skipped)", got.UniqueSources)
+	}
+}
+
+func TestCitationGapSectionErrorDoesNotInvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(body), `"domain":"rival.com"`) {
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"aggregated_metrics":{"total":{"mentions":4,"ai_search_volume":10},"platform":[{"key":"google","mentions":4,"ai_search_volume":10}]}}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.CitationGap(context.Background(), "example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.TargetOK || got.TargetCitations.Mentions != 4 {
+		t.Fatalf("target=%+v", got.TargetCitations)
+	}
+	if got.CompetitorOK || got.CompetitorCitations.Mentions != 0 {
+		t.Fatalf("competitor should be empty on error, got %+v ok=%v", got.CompetitorCitations, got.CompetitorOK)
+	}
+	if got.CompetitorError == "" {
+		t.Fatal("expected competitor_error")
+	}
+	if len(got.UniqueSources) != 0 {
+		t.Fatalf("unique sources must not be invented when one side fails, got %+v", got.UniqueSources)
+	}
+}
+
 func TestPostLiveTaskError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))

@@ -423,6 +423,7 @@ func registerSEORoutes(
 	g.GET("/seo/keyword-gap", h.KeywordGap)
 	g.GET("/seo/domain-compare", h.DomainCompare)
 	g.GET("/seo/content-gap", h.ContentGap)
+	g.GET("/seo/citation-gap", h.CitationGap)
 }
 
 func registerSocialRoutes(

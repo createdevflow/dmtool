@@ -1645,3 +1645,179 @@ func (h *SEOHandler) loadContentGap(ctx context.Context, target, competitor stri
 	}
 	return result, false, nil
 }
+
+// CitationGap returns LLM citation counts for a target/competitor pair.
+// Cache-only unless fetch=1 or refresh=1. Does not write vendor counts
+// into dashboard metrics or invent an AI visibility score.
+func (h *SEOHandler) CitationGap(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	domain := c.Query("domain")
+	if domain == "" {
+		domain = project.URL
+	}
+	competitor := strings.TrimSpace(c.Query("competitor"))
+	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
+	wantFetch := refresh || c.Query("fetch") == "1" || strings.EqualFold(c.Query("fetch"), "true")
+	host := services.NormalizeDomain(domain)
+	rival := services.NormalizeDomain(competitor)
+
+	if !h.dataForSEOReady() {
+		utils.Success(c, citationGapEmptyJSON(host, rival, false, "DataForSEO is not connected. Set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD."), nil)
+		return
+	}
+
+	if rival == "" {
+		utils.Success(c, citationGapEmptyJSON(host, "", true, "Enter a competitor domain to compare LLM citations. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+	if host == "" {
+		utils.Success(c, citationGapEmptyJSON("", rival, true, "invalid domain"), nil)
+		return
+	}
+	if host == rival {
+		utils.Success(c, citationGapEmptyJSON(host, rival, true, "competitor must be a different domain"), nil)
+		return
+	}
+
+	if !wantFetch {
+		if cached, ok := h.cachedCitationGap(host, rival); ok {
+			utils.Success(c, citationGapJSON(cached, true), nil)
+			return
+		}
+		utils.Success(c, citationGapEmptyJSON(host, rival, true, "Click Look up to query DataForSEO LLM Mentions citations. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+
+	result, cached, err := h.loadCitationGap(c.Request.Context(), host, rival, refresh)
+	if err != nil {
+		if errors.Is(err, services.ErrDataForSEONotConfigured) {
+			utils.Success(c, citationGapEmptyJSON(host, rival, false, "DataForSEO is not connected."), nil)
+			return
+		}
+		utils.Success(c, citationGapEmptyJSON(host, rival, true, err.Error()), nil)
+		return
+	}
+	result.Cached = cached
+	utils.Success(c, citationGapJSON(result, cached), nil)
+}
+
+func citationGapEmptyJSON(target, competitor string, configured bool, message string) gin.H {
+	return gin.H{
+		"available":            false,
+		"configured":           configured,
+		"source":               "dataforseo",
+		"target":               target,
+		"competitor":           competitor,
+		"target_citations":     services.LLMMetrics{Sources: []services.LLMSourceDomain{}},
+		"competitor_citations": services.LLMMetrics{Sources: []services.LLMSourceDomain{}},
+		"unique_sources":       []services.LLMSourceDomain{},
+		"target_ok":            false,
+		"competitor_ok":        false,
+		"message":              message,
+	}
+}
+
+func citationGapJSON(result services.CitationGapResult, cached bool) gin.H {
+	if result.TargetCitations.Sources == nil {
+		result.TargetCitations.Sources = []services.LLMSourceDomain{}
+	}
+	if result.CompetitorCitations.Sources == nil {
+		result.CompetitorCitations.Sources = []services.LLMSourceDomain{}
+	}
+	unique := result.UniqueSources
+	if unique == nil {
+		unique = []services.LLMSourceDomain{}
+	}
+	return gin.H{
+		"available":            result.HasAnyData(),
+		"configured":           true,
+		"source":               result.Source,
+		"target":               result.Target,
+		"competitor":           result.Competitor,
+		"location_code":        result.LocationCode,
+		"location_name":        result.LocationName,
+		"language_code":        result.LanguageCode,
+		"target_citations":     result.TargetCitations,
+		"target_ok":            result.TargetOK,
+		"target_error":         result.TargetError,
+		"competitor_citations": result.CompetitorCitations,
+		"competitor_ok":        result.CompetitorOK,
+		"competitor_error":     result.CompetitorError,
+		"unique_sources":       unique,
+		"cached":               cached,
+		"fetched_at":           result.FetchedAt.Format(time.RFC3339),
+		"message":              "DataForSEO LLM Mentions citations for Google AI Overviews and ChatGPT (United States, English). Counts are citations as a source, not an AI visibility score. Not Search Console.",
+	}
+}
+
+func (h *SEOHandler) cachedCitationGap(target, competitor string) (services.CitationGapResult, bool) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" || h.seoRepo == nil {
+		return services.CitationGapResult{}, false
+	}
+	snap, err := h.seoRepo.FindVendorCitationGapSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+	if err != nil || snap == nil || snap.Payload == "" {
+		return services.CitationGapResult{}, false
+	}
+	var cached services.CitationGapResult
+	if json.Unmarshal([]byte(snap.Payload), &cached) != nil || !cached.HasAnyData() {
+		return services.CitationGapResult{}, false
+	}
+	cached.Cached = true
+	return cached, true
+}
+
+func (h *SEOHandler) loadCitationGap(ctx context.Context, target, competitor string, refresh bool) (services.CitationGapResult, bool, error) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return services.CitationGapResult{}, false, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return services.CitationGapResult{}, false, fmt.Errorf("competitor must be a different domain")
+	}
+	if h.seoRepo != nil && !refresh {
+		snap, err := h.seoRepo.FindVendorCitationGapSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+		if err == nil && snap != nil && time.Since(snap.FetchedAt) < vendorSnapshotTTL && snap.Payload != "" {
+			var cached services.CitationGapResult
+			if json.Unmarshal([]byte(snap.Payload), &cached) == nil && cached.HasAnyData() {
+				cached.Cached = true
+				return cached, true, nil
+			}
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[seo] citation gap snapshot read: %v", err)
+		}
+	}
+
+	result, err := h.dataForSEOSvc.CitationGap(ctx, host, rival)
+	if err != nil {
+		return result, false, err
+	}
+	if h.seoRepo != nil && result.HasAnyData() {
+		raw, _ := json.Marshal(result)
+		_ = h.seoRepo.SaveVendorCitationGapSnapshot(&models.VendorCitationGapSnapshot{
+			Target:       result.Target,
+			Competitor:   result.Competitor,
+			LocationCode: result.LocationCode,
+			LanguageCode: result.LanguageCode,
+			Source:       result.Source,
+			Payload:      string(raw),
+			FetchedAt:    result.FetchedAt,
+		})
+	}
+	return result, false, nil
+}

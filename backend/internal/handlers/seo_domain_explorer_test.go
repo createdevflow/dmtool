@@ -24,6 +24,7 @@ type configuredDFS struct {
 	citationResult         services.CitationGapResult
 	backlinkResult         services.BacklinkGapResult
 	backlinkExplorerResult services.BacklinkExplorerResult
+	visGapResult           services.AIVisibilityGapResult
 	labs                   map[string]services.KeywordLabsMetrics
 	relatedResult          services.RelatedKeywordsResult
 	err                    error
@@ -84,6 +85,10 @@ func (f *configuredDFS) BacklinkGap(_ context.Context, _, _ string) (services.Ba
 func (f *configuredDFS) BacklinkExplorer(_ context.Context, _ string) (services.BacklinkExplorerResult, error) {
 	f.calls++
 	return f.backlinkExplorerResult, f.err
+}
+func (f *configuredDFS) AIVisibilityGap(_ context.Context, _, _ string) (services.AIVisibilityGapResult, error) {
+	f.calls++
+	return f.visGapResult, f.err
 }
 
 func TestDomainExplorerUnconfigured(t *testing.T) {

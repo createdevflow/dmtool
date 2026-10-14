@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Globe,
   Sparkles,
+  Eye,
   GitCompare,
   Scale,
   FileSearch,
@@ -98,6 +99,7 @@ export const navGroups: NavGroup[] = [
       { name: "Rank Tracking", href: "/seo/rank-tracking", icon: TrendingUp },
       { name: "Backlinks", href: "/seo/backlinks", icon: LinkIcon },
       { name: "AI Visibility", href: "/seo/ai-visibility", icon: Sparkles },
+      { name: "AI Visibility Gap", href: "/seo/ai-visibility-gap", icon: Eye },
     ],
   },
   {

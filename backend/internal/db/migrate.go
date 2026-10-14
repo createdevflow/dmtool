@@ -53,6 +53,7 @@ func RunMigrations(database *gorm.DB) error {
 		&models.VendorBacklinkGapSnapshot{},
 		&models.VendorKeywordRelatedSnapshot{},
 		&models.VendorBacklinkExplorerSnapshot{},
+		&models.VendorAIVisibilityGapSnapshot{},
 	}
 
 	migrator := database.Migrator()

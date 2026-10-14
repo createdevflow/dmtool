@@ -43,6 +43,7 @@ type DataForSEOService interface {
 	CitationGap(ctx context.Context, target, competitor string) (CitationGapResult, error)
 	BacklinkGap(ctx context.Context, target, competitor string) (BacklinkGapResult, error)
 	BacklinkExplorer(ctx context.Context, domain string) (BacklinkExplorerResult, error)
+	AIVisibilityGap(ctx context.Context, target, competitor string) (AIVisibilityGapResult, error)
 }
 
 type dataForSEO struct {
@@ -631,6 +632,67 @@ func (s *dataForSEO) CitationGap(ctx context.Context, target, competitor string)
 			}
 		}
 		for _, src := range out.CompetitorCitations.Sources {
+			if src.Domain == "" || ours[src.Domain] {
+				continue
+			}
+			out.UniqueSources = append(out.UniqueSources, src)
+		}
+	}
+	return out, nil
+}
+
+// AIVisibilityGap compares LLM mention counts (search_scope any) for two
+// domains. Distinct from CitationGap, which uses sources. Sections fail
+// independently. Unique sources are co-mentioned with the competitor and
+// not with the target when both lookups succeed. No composite score is
+// computed. Results are not written to dashboard metrics.
+func (s *dataForSEO) AIVisibilityGap(ctx context.Context, target, competitor string) (AIVisibilityGapResult, error) {
+	out := AIVisibilityGapResult{
+		Source:       "dataforseo",
+		LocationCode: DataForSEOLocation,
+		LocationName: DataForSEOLocationName,
+		LanguageCode: DataForSEOLanguage,
+		FetchedAt:    time.Now().UTC(),
+		TargetMentions: LLMMetrics{
+			Sources: []LLMSourceDomain{},
+		},
+		CompetitorMentions: LLMMetrics{
+			Sources: []LLMSourceDomain{},
+		},
+		UniqueSources: []LLMSourceDomain{},
+	}
+	if !s.Configured() {
+		return out, ErrDataForSEONotConfigured
+	}
+	host := NormalizeDomain(target)
+	rival := NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return out, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return out, fmt.Errorf("competitor must be a different domain")
+	}
+	out.Target = host
+	out.Competitor = rival
+
+	if err := s.fillLLMTargetMetrics(ctx, host, "any", &out.TargetMentions); err != nil {
+		out.TargetError = err.Error()
+	} else {
+		out.TargetOK = true
+	}
+	if err := s.fillLLMTargetMetrics(ctx, rival, "any", &out.CompetitorMentions); err != nil {
+		out.CompetitorError = err.Error()
+	} else {
+		out.CompetitorOK = true
+	}
+	if out.TargetOK && out.CompetitorOK {
+		ours := map[string]bool{host: true, rival: true}
+		for _, src := range out.TargetMentions.Sources {
+			if src.Domain != "" {
+				ours[src.Domain] = true
+			}
+		}
+		for _, src := range out.CompetitorMentions.Sources {
 			if src.Domain == "" || ours[src.Domain] {
 				continue
 			}
@@ -1518,6 +1580,28 @@ type CitationGapResult struct {
 }
 
 func (r CitationGapResult) HasAnyData() bool {
+	return r.TargetOK || r.CompetitorOK
+}
+
+type AIVisibilityGapResult struct {
+	Target             string            `json:"target"`
+	Competitor         string            `json:"competitor"`
+	Source             string            `json:"source"`
+	LocationCode       int               `json:"location_code"`
+	LocationName       string            `json:"location_name"`
+	LanguageCode       string            `json:"language_code"`
+	TargetMentions     LLMMetrics        `json:"target_mentions"`
+	TargetOK           bool              `json:"target_ok"`
+	TargetError        string            `json:"target_error,omitempty"`
+	CompetitorMentions LLMMetrics        `json:"competitor_mentions"`
+	CompetitorOK       bool              `json:"competitor_ok"`
+	CompetitorError    string            `json:"competitor_error,omitempty"`
+	UniqueSources      []LLMSourceDomain `json:"unique_sources"`
+	FetchedAt          time.Time         `json:"fetched_at"`
+	Cached             bool              `json:"cached"`
+}
+
+func (r AIVisibilityGapResult) HasAnyData() bool {
 	return r.TargetOK || r.CompetitorOK
 }
 

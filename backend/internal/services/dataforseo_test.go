@@ -624,6 +624,96 @@ func TestBacklinkGapSectionErrorDoesNotInvent(t *testing.T) {
 	}
 }
 
+func TestBacklinkExplorerUnconfigured(t *testing.T) {
+	svc := NewDataForSEOService("", "")
+	_, err := svc.BacklinkExplorer(context.Background(), "example.com")
+	if err != ErrDataForSEONotConfigured {
+		t.Fatalf("err=%v want ErrDataForSEONotConfigured", err)
+	}
+}
+
+func TestBacklinkExplorerInvalidDomain(t *testing.T) {
+	svc := &dataForSEO{login: "u", password: "p"}
+	_, err := svc.BacklinkExplorer(context.Background(), "not a domain")
+	if err == nil || !strings.Contains(err.Error(), "invalid domain") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestBacklinkExplorerParsesMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "backlinks/summary"):
+			body, _ := io.ReadAll(r.Body)
+			payload := string(body)
+			if !strings.Contains(payload, `"target":"example.com"`) && !strings.Contains(payload, `"target": "example.com"`) {
+				http.Error(w, "expected target example.com, got "+payload, http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"backlinks":41245,"referring_domains":12372,"referring_main_domains":11438,"rank":371,"backlinks_spam_score":8,"broken_backlinks":209,"broken_pages":265,"referring_domains_nofollow":40,"referring_pages":38786,"referring_pages_nofollow":12,"referring_ips":10401,"referring_subnets":6427,"first_seen":"2020-01-18 11:50:58 +00:00","referring_links_types":{"anchor":36666,"image":210},"referring_links_attributes":{"nofollow":900,"ugc":20},"info":{"target_spam_score":3}}]}]}`))
+		case strings.Contains(r.URL.Path, "backlinks/referring_domains"):
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"total_count":3,"items_count":3,"items":[
+				{"domain":"news.site","rank":120,"backlinks":44,"first_seen":"2022-06-17 19:02:31 +00:00","backlinks_spam_score":5,"referring_pages":12,"broken_backlinks":1,"referring_pages_nofollow":2},
+				{"domain":"www.example.com","rank":9,"backlinks":2,"first_seen":"2021-01-01 00:00:00 +00:00","backlinks_spam_score":0,"referring_pages":1},
+				{"domain":"press.site","rank":90,"backlinks":4,"first_seen":"2021-02-02 00:00:00 +00:00","backlinks_spam_score":0,"referring_pages":3}
+			]}]}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := &dataForSEO{login: "user", password: "pass", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.BacklinkExplorer(context.Background(), "https://www.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Domain != "example.com" {
+		t.Fatalf("domain=%s", got.Domain)
+	}
+	if !got.SummaryOK || got.SummaryError != "" {
+		t.Fatalf("summary ok=%v err=%s", got.SummaryOK, got.SummaryError)
+	}
+	if got.Audit.Backlinks != 41245 || got.Audit.ReferringDomains != 12372 || got.Audit.Rank != 371 || got.Audit.BrokenBacklinks != 209 {
+		t.Fatalf("audit=%+v", got.Audit)
+	}
+	if got.Audit.LinkTypes["anchor"] != 36666 || got.Audit.LinkAttributes["nofollow"] != 900 {
+		t.Fatalf("maps types=%v attrs=%v", got.Audit.LinkTypes, got.Audit.LinkAttributes)
+	}
+	if !got.ReferringOK || got.TotalCount != 3 {
+		t.Fatalf("referring ok=%v total=%d err=%s", got.ReferringOK, got.TotalCount, got.ReferringError)
+	}
+	if len(got.Referring) != 2 || got.Referring[0].Domain != "news.site" || got.Referring[0].Rank != 120 || got.Referring[1].Domain != "press.site" {
+		t.Fatalf("referring=%+v (target host must be skipped)", got.Referring)
+	}
+}
+
+func TestBacklinkExplorerSectionErrorDoesNotInvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.BacklinkExplorer(context.Background(), "example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SummaryOK || got.ReferringOK {
+		t.Fatalf("must not mark sections ok on error, summary=%v referring=%v", got.SummaryOK, got.ReferringOK)
+	}
+	if got.Audit.Backlinks != 0 || got.Audit.ReferringDomains != 0 || got.Audit.Rank != 0 {
+		t.Fatalf("must not invent audit numbers, got %+v", got.Audit)
+	}
+	if len(got.Referring) != 0 {
+		t.Fatalf("must not invent referring domains, got %+v", got.Referring)
+	}
+	if got.SummaryError == "" || got.ReferringError == "" {
+		t.Fatal("expected section errors")
+	}
+}
+
 func TestCitationGapUnconfigured(t *testing.T) {
 	svc := NewDataForSEOService("", "")
 	_, err := svc.CitationGap(context.Background(), "example.com", "rival.com")

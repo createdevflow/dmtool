@@ -425,6 +425,7 @@ func registerSEORoutes(
 	g.GET("/seo/content-gap", h.ContentGap)
 	g.GET("/seo/citation-gap", h.CitationGap)
 	g.GET("/seo/backlink-gap", h.BacklinkGap)
+	g.GET("/seo/backlink-explorer", h.BacklinkExplorer)
 }
 
 func registerSocialRoutes(

@@ -2113,3 +2113,179 @@ func (h *SEOHandler) loadBacklinkGap(ctx context.Context, target, competitor str
 	}
 	return result, false, nil
 }
+
+// BacklinkExplorer returns a DataForSEO backlink audit and referring-domain
+// sample. Cache-only unless fetch=1 or refresh=1. Does not write vendor
+// counts into dashboard metrics or invent Moz DA / outreach scores.
+func (h *SEOHandler) BacklinkExplorer(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	domain := c.Query("domain")
+	if domain == "" {
+		domain = project.URL
+	}
+	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
+	wantFetch := refresh || c.Query("fetch") == "1" || strings.EqualFold(c.Query("fetch"), "true")
+	host := services.NormalizeDomain(domain)
+
+	if !h.dataForSEOReady() {
+		utils.Success(c, backlinkExplorerEmptyJSON(host, false, "DataForSEO is not connected. Set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD."), nil)
+		return
+	}
+
+	if host == "" {
+		utils.Success(c, backlinkExplorerEmptyJSON("", true, "invalid domain"), nil)
+		return
+	}
+
+	if !wantFetch {
+		if cached, ok := h.cachedBacklinkExplorer(host); ok {
+			utils.Success(c, backlinkExplorerJSON(cached, true), nil)
+			return
+		}
+		utils.Success(c, backlinkExplorerEmptyJSON(host, true, "Click Look up to query DataForSEO backlinks summary and referring domains. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+
+	result, cached, err := h.loadBacklinkExplorer(c.Request.Context(), host, refresh)
+	if err != nil {
+		if errors.Is(err, services.ErrDataForSEONotConfigured) {
+			utils.Success(c, backlinkExplorerEmptyJSON(host, false, "DataForSEO is not connected."), nil)
+			return
+		}
+		utils.Success(c, backlinkExplorerEmptyJSON(host, true, err.Error()), nil)
+		return
+	}
+	result.Cached = cached
+	utils.Success(c, backlinkExplorerJSON(result, cached), nil)
+}
+
+func backlinkExplorerEmptyJSON(domain string, configured bool, message string) gin.H {
+	return gin.H{
+		"available":    false,
+		"configured":   configured,
+		"source":       "dataforseo",
+		"domain":       domain,
+		"audit":        services.BacklinkAudit{LinkTypes: map[string]int{}, LinkAttributes: map[string]int{}},
+		"referring":    []services.ReferringDomain{},
+		"summary_ok":   false,
+		"referring_ok": false,
+		"message":      message,
+	}
+}
+
+func backlinkExplorerJSON(result services.BacklinkExplorerResult, cached bool) gin.H {
+	referring := result.Referring
+	if referring == nil {
+		referring = []services.ReferringDomain{}
+	}
+	audit := result.Audit
+	if audit.LinkTypes == nil {
+		audit.LinkTypes = map[string]int{}
+	}
+	if audit.LinkAttributes == nil {
+		audit.LinkAttributes = map[string]int{}
+	}
+	return gin.H{
+		"available":       result.HasAnyData(),
+		"configured":      true,
+		"source":          result.Source,
+		"domain":          result.Domain,
+		"location_code":   result.LocationCode,
+		"location_name":   result.LocationName,
+		"language_code":   result.LanguageCode,
+		"audit":           audit,
+		"summary_ok":      result.SummaryOK,
+		"summary_error":   result.SummaryError,
+		"referring":       referring,
+		"referring_ok":    result.ReferringOK,
+		"referring_error": result.ReferringError,
+		"total_count":     result.TotalCount,
+		"cached":          cached,
+		"fetched_at":      result.FetchedAt.Format(time.RFC3339),
+		"message":         "Referring domains and backlink audit from DataForSEO Backlinks index. Rank is DataForSEO Rank, not Moz Domain Authority. Not Search Console and not an outreach list.",
+	}
+}
+
+func (h *SEOHandler) cachedBacklinkExplorer(domain string) (services.BacklinkExplorerResult, bool) {
+	host := services.NormalizeDomain(domain)
+	if host == "" || h.seoRepo == nil {
+		return services.BacklinkExplorerResult{}, false
+	}
+	snap, err := h.seoRepo.FindVendorBacklinkExplorerSnapshot(host, services.DataForSEOLocation, services.DataForSEOLanguage)
+	if err != nil || snap == nil || snap.Payload == "" {
+		return services.BacklinkExplorerResult{}, false
+	}
+	var cached services.BacklinkExplorerResult
+	if json.Unmarshal([]byte(snap.Payload), &cached) != nil || !cached.HasAnyData() {
+		return services.BacklinkExplorerResult{}, false
+	}
+	cached.Cached = true
+	return cached, true
+}
+
+func (h *SEOHandler) loadBacklinkExplorer(ctx context.Context, domain string, refresh bool) (services.BacklinkExplorerResult, bool, error) {
+	host := services.NormalizeDomain(domain)
+	if host == "" {
+		return services.BacklinkExplorerResult{}, false, fmt.Errorf("invalid domain")
+	}
+	if h.seoRepo != nil && !refresh {
+		snap, err := h.seoRepo.FindVendorBacklinkExplorerSnapshot(host, services.DataForSEOLocation, services.DataForSEOLanguage)
+		if err == nil && snap != nil && time.Since(snap.FetchedAt) < vendorSnapshotTTL && snap.Payload != "" {
+			var cached services.BacklinkExplorerResult
+			if json.Unmarshal([]byte(snap.Payload), &cached) == nil && cached.HasAnyData() {
+				cached.Cached = true
+				return cached, true, nil
+			}
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[seo] backlink explorer snapshot read: %v", err)
+		}
+	}
+
+	result, err := h.dataForSEOSvc.BacklinkExplorer(ctx, host)
+	if err != nil {
+		return result, false, err
+	}
+	if result.Domain == "" {
+		result.Domain = host
+	}
+	if result.Source == "" {
+		result.Source = "dataforseo"
+	}
+	if result.LocationCode == 0 {
+		result.LocationCode = services.DataForSEOLocation
+	}
+	if result.LanguageCode == "" {
+		result.LanguageCode = services.DataForSEOLanguage
+	}
+	if result.FetchedAt.IsZero() {
+		result.FetchedAt = time.Now().UTC()
+	}
+	if result.Referring == nil {
+		result.Referring = []services.ReferringDomain{}
+	}
+	if h.seoRepo != nil && result.HasAnyData() {
+		raw, _ := json.Marshal(result)
+		_ = h.seoRepo.SaveVendorBacklinkExplorerSnapshot(&models.VendorBacklinkExplorerSnapshot{
+			Domain:       result.Domain,
+			LocationCode: result.LocationCode,
+			LanguageCode: result.LanguageCode,
+			Source:       result.Source,
+			Payload:      string(raw),
+			FetchedAt:    result.FetchedAt,
+		})
+	}
+	return result, false, nil
+}

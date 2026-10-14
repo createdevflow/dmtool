@@ -16,19 +16,20 @@ import (
 )
 
 type configuredDFS struct {
-	result         services.DomainExplorerResult
-	aiResult       services.AIVisibilityResult
-	gapResult      services.KeywordGapResult
-	compareResult  services.DomainCompareResult
-	contentResult  services.ContentGapResult
-	citationResult services.CitationGapResult
-	backlinkResult services.BacklinkGapResult
-	labs           map[string]services.KeywordLabsMetrics
-	relatedResult  services.RelatedKeywordsResult
-	err            error
-	calls          int
-	overviewCalls  int
-	relatedCalls   int
+	result                 services.DomainExplorerResult
+	aiResult               services.AIVisibilityResult
+	gapResult              services.KeywordGapResult
+	compareResult          services.DomainCompareResult
+	contentResult          services.ContentGapResult
+	citationResult         services.CitationGapResult
+	backlinkResult         services.BacklinkGapResult
+	backlinkExplorerResult services.BacklinkExplorerResult
+	labs                   map[string]services.KeywordLabsMetrics
+	relatedResult          services.RelatedKeywordsResult
+	err                    error
+	calls                  int
+	overviewCalls          int
+	relatedCalls           int
 }
 
 func (f *configuredDFS) Configured() bool { return true }
@@ -79,6 +80,10 @@ func (f *configuredDFS) CitationGap(_ context.Context, _, _ string) (services.Ci
 func (f *configuredDFS) BacklinkGap(_ context.Context, _, _ string) (services.BacklinkGapResult, error) {
 	f.calls++
 	return f.backlinkResult, f.err
+}
+func (f *configuredDFS) BacklinkExplorer(_ context.Context, _ string) (services.BacklinkExplorerResult, error) {
+	f.calls++
+	return f.backlinkExplorerResult, f.err
 }
 
 func TestDomainExplorerUnconfigured(t *testing.T) {

@@ -24,6 +24,7 @@ const (
 	competitorLimit        = 8
 	keywordOverviewLimit   = 30
 	backlinkGapLimit       = 15
+	referringDomainsLimit  = 15
 )
 
 // ErrDataForSEONotConfigured is returned when login/password are empty.
@@ -41,6 +42,7 @@ type DataForSEOService interface {
 	ContentGap(ctx context.Context, target, competitor string) (ContentGapResult, error)
 	CitationGap(ctx context.Context, target, competitor string) (CitationGapResult, error)
 	BacklinkGap(ctx context.Context, target, competitor string) (BacklinkGapResult, error)
+	BacklinkExplorer(ctx context.Context, domain string) (BacklinkExplorerResult, error)
 }
 
 type dataForSEO struct {
@@ -715,6 +717,151 @@ func (s *dataForSEO) BacklinkGap(ctx context.Context, target, competitor string)
 	return out, nil
 }
 
+// BacklinkExplorer returns a backlink audit (summary) and a sample of
+// referring domains for a target. Rank is DataForSEO Rank, not Moz DA.
+// Results are not written to dashboard metrics and are not an outreach list.
+func (s *dataForSEO) BacklinkExplorer(ctx context.Context, domain string) (BacklinkExplorerResult, error) {
+	out := BacklinkExplorerResult{
+		Source:       "dataforseo",
+		LocationCode: DataForSEOLocation,
+		LocationName: DataForSEOLocationName,
+		LanguageCode: DataForSEOLanguage,
+		FetchedAt:    time.Now().UTC(),
+		Referring:    []ReferringDomain{},
+		Audit: BacklinkAudit{
+			LinkTypes:      map[string]int{},
+			LinkAttributes: map[string]int{},
+		},
+	}
+	if !s.Configured() {
+		return out, ErrDataForSEONotConfigured
+	}
+	host := NormalizeDomain(domain)
+	if host == "" {
+		return out, fmt.Errorf("invalid domain")
+	}
+	out.Domain = host
+
+	if err := s.fillBacklinkAudit(ctx, host, &out); err != nil {
+		out.SummaryError = err.Error()
+	} else {
+		out.SummaryOK = true
+	}
+	if err := s.fillReferringDomains(ctx, host, &out); err != nil {
+		out.ReferringError = err.Error()
+	} else {
+		out.ReferringOK = true
+	}
+	return out, nil
+}
+
+func (s *dataForSEO) fillBacklinkAudit(ctx context.Context, host string, out *BacklinkExplorerResult) error {
+	raw, err := s.postLive(ctx, "/v3/backlinks/summary/live", map[string]any{
+		"target":                     host,
+		"include_subdomains":         true,
+		"exclude_internal_backlinks": true,
+		"backlinks_status_type":      "live",
+		"internal_list_limit":        10,
+	})
+	if err != nil {
+		return err
+	}
+	var rows []backlinkSummaryRow
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return fmt.Errorf("no backlink summary for %s", host)
+	}
+	row := rows[0]
+	out.Audit = BacklinkAudit{
+		Backlinks:                row.Backlinks,
+		ReferringDomains:         row.ReferringDomains,
+		ReferringMainDomains:     row.ReferringMainDomains,
+		Rank:                     row.Rank,
+		SpamScore:                row.BacklinksSpamScore,
+		TargetSpamScore:          row.Info.TargetSpamScore,
+		BrokenBacklinks:          row.BrokenBacklinks,
+		BrokenPages:              row.BrokenPages,
+		ReferringDomainsNofollow: row.ReferringDomainsNofollow,
+		ReferringPages:           row.ReferringPages,
+		ReferringPagesNofollow:   row.ReferringPagesNofollow,
+		ReferringIPs:             row.ReferringIPs,
+		ReferringSubnets:         row.ReferringSubnets,
+		FirstSeen:                strings.TrimSpace(row.FirstSeen),
+		LinkTypes:                copyIntMap(row.ReferringLinksTypes),
+		LinkAttributes:           copyIntMap(row.ReferringLinksAttributes),
+	}
+	return nil
+}
+
+func (s *dataForSEO) fillReferringDomains(ctx context.Context, host string, out *BacklinkExplorerResult) error {
+	raw, err := s.postLive(ctx, "/v3/backlinks/referring_domains/live", map[string]any{
+		"target":                     host,
+		"limit":                      referringDomainsLimit,
+		"order_by":                   []string{"rank,desc"},
+		"include_subdomains":         true,
+		"exclude_internal_backlinks": true,
+		"backlinks_status_type":      "live",
+	})
+	if err != nil {
+		return err
+	}
+	var wrap []struct {
+		TotalCount int `json:"total_count"`
+		Items      []struct {
+			Domain                 string `json:"domain"`
+			Rank                   int    `json:"rank"`
+			Backlinks              int    `json:"backlinks"`
+			ReferringPages         int    `json:"referring_pages"`
+			BacklinksSpamScore     int    `json:"backlinks_spam_score"`
+			FirstSeen              string `json:"first_seen"`
+			BrokenBacklinks        int    `json:"broken_backlinks"`
+			ReferringPagesNofollow int    `json:"referring_pages_nofollow"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return err
+	}
+	out.Referring = []ReferringDomain{}
+	if len(wrap) == 0 {
+		return nil
+	}
+	out.TotalCount = wrap[0].TotalCount
+	for _, item := range wrap[0].Items {
+		domain := strings.TrimSpace(item.Domain)
+		if domain == "" {
+			continue
+		}
+		norm := NormalizeDomain(domain)
+		if norm == host {
+			continue
+		}
+		out.Referring = append(out.Referring, ReferringDomain{
+			Domain:          domain,
+			Rank:            item.Rank,
+			Backlinks:       item.Backlinks,
+			ReferringPages:  item.ReferringPages,
+			SpamScore:       item.BacklinksSpamScore,
+			FirstSeen:       strings.TrimSpace(item.FirstSeen),
+			BrokenBacklinks: item.BrokenBacklinks,
+			NofollowPages:   item.ReferringPagesNofollow,
+		})
+	}
+	return nil
+}
+
+func copyIntMap(in map[string]int) map[string]int {
+	out := map[string]int{}
+	for k, v := range in {
+		if k == "" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 func parseGapItems(raw json.RawMessage) ([]parsedGapRow, error) {
 	var wrap []struct {
 		Items []domainIntersectionRow `json:"items"`
@@ -1177,10 +1324,24 @@ type rankedKeywordRow struct {
 }
 
 type backlinkSummaryRow struct {
-	Backlinks          int `json:"backlinks"`
-	ReferringDomains   int `json:"referring_domains"`
-	Rank               int `json:"rank"`
-	BacklinksSpamScore int `json:"backlinks_spam_score"`
+	Backlinks                int            `json:"backlinks"`
+	ReferringDomains         int            `json:"referring_domains"`
+	ReferringMainDomains     int            `json:"referring_main_domains"`
+	Rank                     int            `json:"rank"`
+	BacklinksSpamScore       int            `json:"backlinks_spam_score"`
+	BrokenBacklinks          int            `json:"broken_backlinks"`
+	BrokenPages              int            `json:"broken_pages"`
+	ReferringDomainsNofollow int            `json:"referring_domains_nofollow"`
+	ReferringPages           int            `json:"referring_pages"`
+	ReferringPagesNofollow   int            `json:"referring_pages_nofollow"`
+	ReferringIPs             int            `json:"referring_ips"`
+	ReferringSubnets         int            `json:"referring_subnets"`
+	FirstSeen                string         `json:"first_seen"`
+	ReferringLinksTypes      map[string]int `json:"referring_links_types"`
+	ReferringLinksAttributes map[string]int `json:"referring_links_attributes"`
+	Info                     struct {
+		TargetSpamScore int `json:"target_spam_score"`
+	} `json:"info"`
 }
 
 type AIVisibilityResult struct {
@@ -1379,13 +1540,55 @@ func (r BacklinkGapResult) HasAnyData() bool {
 	return r.IntersectionOK
 }
 
+type BacklinkExplorerResult struct {
+	Domain         string            `json:"domain"`
+	Source         string            `json:"source"`
+	LocationCode   int               `json:"location_code"`
+	LocationName   string            `json:"location_name"`
+	LanguageCode   string            `json:"language_code"`
+	Audit          BacklinkAudit     `json:"audit"`
+	SummaryOK      bool              `json:"summary_ok"`
+	SummaryError   string            `json:"summary_error,omitempty"`
+	Referring      []ReferringDomain `json:"referring"`
+	ReferringOK    bool              `json:"referring_ok"`
+	ReferringError string            `json:"referring_error,omitempty"`
+	TotalCount     int               `json:"total_count"`
+	FetchedAt      time.Time         `json:"fetched_at"`
+	Cached         bool              `json:"cached"`
+}
+
+func (r BacklinkExplorerResult) HasAnyData() bool {
+	return r.SummaryOK || r.ReferringOK
+}
+
+type BacklinkAudit struct {
+	Backlinks                int            `json:"backlinks"`
+	ReferringDomains         int            `json:"referring_domains"`
+	ReferringMainDomains     int            `json:"referring_main_domains"`
+	Rank                     int            `json:"rank"`
+	SpamScore                int            `json:"spam_score"`
+	TargetSpamScore          int            `json:"target_spam_score"`
+	BrokenBacklinks          int            `json:"broken_backlinks"`
+	BrokenPages              int            `json:"broken_pages"`
+	ReferringDomainsNofollow int            `json:"referring_domains_nofollow"`
+	ReferringPages           int            `json:"referring_pages"`
+	ReferringPagesNofollow   int            `json:"referring_pages_nofollow"`
+	ReferringIPs             int            `json:"referring_ips"`
+	ReferringSubnets         int            `json:"referring_subnets"`
+	FirstSeen                string         `json:"first_seen"`
+	LinkTypes                map[string]int `json:"link_types"`
+	LinkAttributes           map[string]int `json:"link_attributes"`
+}
+
 type ReferringDomain struct {
-	Domain         string `json:"domain"`
-	Rank           int    `json:"rank"`
-	Backlinks      int    `json:"backlinks"`
-	ReferringPages int    `json:"referring_pages"`
-	SpamScore      int    `json:"spam_score"`
-	FirstSeen      string `json:"first_seen"`
+	Domain          string `json:"domain"`
+	Rank            int    `json:"rank"`
+	Backlinks       int    `json:"backlinks"`
+	ReferringPages  int    `json:"referring_pages"`
+	SpamScore       int    `json:"spam_score"`
+	FirstSeen       string `json:"first_seen"`
+	BrokenBacklinks int    `json:"broken_backlinks,omitempty"`
+	NofollowPages   int    `json:"referring_pages_nofollow,omitempty"`
 }
 
 type backlinkIntersectionHit struct {

@@ -1,22 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Link as LinkIcon } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Loader2 } from "lucide-react";
 import { dashboardApi } from "@/lib/api-client";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
-import { DomainExplorerPanel } from "@/components/seo/domain-explorer";
-
-function fmtNum(n: unknown): string {
-  const v = Number(n);
-  if (!Number.isFinite(v) || v <= 0) return "—";
-  return v.toLocaleString();
-}
+import { BacklinkExplorerPanel } from "@/components/seo/backlink-explorer";
 
 export default function BacklinksPage() {
   const [projects, setProjects] = useState<any[]>([]);
   const [project, setProject] = useState<any>(null);
-  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchData = async (targetProjectId?: number) => {
@@ -34,8 +26,6 @@ export default function BacklinksPage() {
           : defaultProject;
         if (selected) localStorage.setItem("dmtool_active_project_id", selected.id.toString());
         setProject(selected);
-        const res = await dashboardApi.getBacklinks(selected.id);
-        setData(res.data?.data ?? null);
       }
     } catch (err) {
       console.error(err);
@@ -67,42 +57,11 @@ export default function BacklinksPage() {
         <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">SEO Intelligence</h2>
         <p className="text-3xl font-semibold text-slate-900 tracking-tight">Backlinks</p>
         <p className="text-sm text-slate-500">
-          DataForSEO Backlinks index when a domain lookup has run. Rank is not Moz Domain Authority.
+          Referring domains and a backlink audit via DataForSEO. Rank is DataForSEO Rank, not Moz DA. This is not an outreach list.
         </p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "Backlinks", value: data?.available ? fmtNum(data.total_backlinks) : "—" },
-          { label: "Referring domains", value: data?.available ? fmtNum(data.referring_domains) : "—" },
-          { label: "DataForSEO Rank", value: data?.available && data.rank > 0 ? fmtNum(data.rank) : "—" },
-          { label: "Moz DA", value: "—" },
-        ].map((s) => (
-          <Card key={s.label} className="border-slate-100 shadow-none rounded-2xl">
-            <CardContent className="p-6">
-              <p className="text-2xl font-bold text-slate-900">{s.value}</p>
-              <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mt-1">{s.label}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <Card className="border-slate-100 shadow-none rounded-2xl">
-        <CardHeader className="px-8 pt-8 pb-4">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <LinkIcon className="w-4 h-4 text-slate-400" />
-            Index status
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-8 pb-8">
-          <p className="text-sm text-slate-600">{data?.message || "Backlink index is not connected."}</p>
-          {data?.domain && (
-            <p className="text-xs text-slate-400 mt-2">{data.domain}{data.cached ? " · cached" : ""}</p>
-          )}
-        </CardContent>
-      </Card>
-
-      <DomainExplorerPanel projectId={project?.id} defaultDomain={project?.url || ""} />
+      <BacklinkExplorerPanel projectId={project?.id} defaultDomain={project?.url} />
     </div>
   );
 }

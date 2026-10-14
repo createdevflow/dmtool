@@ -325,6 +325,13 @@ export const dashboardApi = {
     else if (opts?.fetch) params.set("fetch", "1");
     return apiClient.get(`/seo/backlink-gap?${params.toString()}`);
   },
+  getBacklinkExplorer: (projectId: number, domain?: string, opts?: { refresh?: boolean; fetch?: boolean }) => {
+    const params = new URLSearchParams({ project_id: String(projectId) });
+    if (domain) params.set("domain", domain);
+    if (opts?.refresh) params.set("refresh", "1");
+    else if (opts?.fetch) params.set("fetch", "1");
+    return apiClient.get(`/seo/backlink-explorer?${params.toString()}`);
+  },
 
   getSocialHistoryForDelta: (projectId: number, days = 7) =>
     apiClient.get(`/social/history?project_id=${projectId}&days=${days}`),

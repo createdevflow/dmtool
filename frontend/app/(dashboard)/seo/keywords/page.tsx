@@ -52,6 +52,9 @@ export default function KeywordsPage() {
   const [seed, setSeed] = useState("");
   const [source, setSource] = useState("");
   const [ideas, setIdeas] = useState<any[]>([]);
+  const [related, setRelated] = useState<any[]>([]);
+  const [relatedOk, setRelatedOk] = useState(false);
+  const [relatedError, setRelatedError] = useState("");
   const [labsConfigured, setLabsConfigured] = useState(false);
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState<"all" | "easy" | "medium" | "hard">("all");
@@ -69,6 +72,9 @@ export default function KeywordsPage() {
           setKeywords(data?.keywords ?? (Array.isArray(data) ? data : []));
           setSource(data?.source ?? "");
           setIdeas(Array.isArray(data?.ideas) ? data.ideas : []);
+          setRelated(Array.isArray(data?.related) ? data.related : []);
+          setRelatedOk(!!data?.related_ok);
+          setRelatedError(typeof data?.related_error === "string" ? data.related_error : "");
           setLabsConfigured(!!data?.labs_configured);
           setMessage(typeof data?.message === "string" ? data.message : "");
         }
@@ -99,6 +105,9 @@ export default function KeywordsPage() {
       });
       setSource(data?.source ?? "autocomplete");
       setIdeas(Array.isArray(data?.ideas) ? data.ideas : []);
+      setRelated(Array.isArray(data?.related) ? data.related : []);
+      setRelatedOk(!!data?.related_ok);
+      setRelatedError(typeof data?.related_error === "string" ? data.related_error : "");
       setLabsConfigured(!!data?.labs_configured);
       setMessage(typeof data?.message === "string" ? data.message : "");
       setSeed("");
@@ -111,9 +120,9 @@ export default function KeywordsPage() {
 
   const handleExportCSV = () => {
     if (!keywords.length) return;
-    const header = "Keyword,Search volume (Labs),CPC,Impressions (GSC),Clicks,Difficulty,Position,Intent,Source\n";
+    const header = "Keyword,Search volume (Labs),Trend %,CPC,Competition,SERP features,Labs intent,Impressions (GSC),Clicks,Difficulty,Position,Intent,Source\n";
     const rows = keywords.map((k: any) =>
-      `"${k.keyword}",${k.labs_enriched ? (k.search_volume ?? 0) : ""},${k.labs_enriched && k.cpc > 0 ? k.cpc : ""},${k.impressions ?? k.volume ?? 0},${k.clicks ?? 0},${k.kd || ""},${k.position > 0 ? k.position.toFixed(1) : ""},${k.intent ?? ""},${k.seed ?? ""}`
+      `"${k.keyword}",${k.labs_enriched ? (k.search_volume ?? 0) : ""},${k.labs_enriched && k.trend_monthly != null ? k.trend_monthly : ""},${k.labs_enriched && k.cpc > 0 ? k.cpc : ""},${k.labs_enriched ? (k.competition_level || "") : ""},${k.labs_enriched && Array.isArray(k.serp_features) ? k.serp_features.join("; ") : ""},${k.labs_intent || ""},${k.impressions ?? k.volume ?? 0},${k.clicks ?? 0},${k.kd || ""},${k.position > 0 ? k.position.toFixed(1) : ""},${k.intent ?? ""},${k.seed ?? ""}`
     ).join("\n");
     const blob = new Blob([header + rows], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -212,7 +221,7 @@ export default function KeywordsPage() {
                   {source === "gsc"
                     ? "Connect Google Search Console to see your real organic keywords."
                     : labsConfigured
-                      ? "Enter a seed and Generate. That loads DataForSEO Labs volume, CPC, and difficulty. Page load does not spend credits."
+                      ? "Enter a seed and Generate. That loads DataForSEO Labs volume, CPC, difficulty, SERP features, and related searches. Page load does not spend credits."
                       : "Enter a seed keyword above to generate suggestions from Google. Search volume stays empty until DataForSEO is connected."}
                 </p>
               </div>
@@ -223,6 +232,8 @@ export default function KeywordsPage() {
                     <th className="text-left font-semibold py-4 pl-6 text-[10px] uppercase tracking-widest">Keyword</th>
                     <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Search volume</th>
                     <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">CPC</th>
+                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Competition</th>
+                    <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">SERP</th>
                     <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Impressions</th>
                     <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Clicks</th>
                     <th className="text-left font-semibold py-4 text-[10px] uppercase tracking-widest">Intent</th>
@@ -249,10 +260,39 @@ export default function KeywordsPage() {
                           )}
                         </td>
                         <td className="py-4 font-mono text-slate-700 font-semibold">
-                          {kw.labs_enriched ? formatImpressions(kw.search_volume ?? 0) : "—"}
+                          {kw.labs_enriched ? (
+                            <div>
+                              <div>{formatImpressions(kw.search_volume ?? 0)}</div>
+                              {typeof kw.trend_monthly === "number" && Number.isFinite(kw.trend_monthly) && (
+                                <div className={`text-[10px] font-semibold ${kw.trend_monthly > 0 ? "text-emerald-600" : kw.trend_monthly < 0 ? "text-rose-600" : "text-slate-400"}`}>
+                                  {kw.trend_monthly > 0 ? `+${kw.trend_monthly}%` : `${kw.trend_monthly}%`} month
+                                </div>
+                              )}
+                            </div>
+                          ) : "—"}
                         </td>
                         <td className="py-4 font-mono text-slate-700 font-semibold">
                           {kw.labs_enriched && Number(kw.cpc) > 0 ? `$${Number(kw.cpc).toFixed(2)}` : "—"}
+                        </td>
+                        <td className="py-4">
+                          {kw.labs_enriched && kw.competition_level ? (
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-600">{kw.competition_level}</span>
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
+                        </td>
+                        <td className="py-4">
+                          {kw.labs_enriched && Array.isArray(kw.serp_features) && kw.serp_features.filter((f: string) => f && f !== "organic" && f !== "paid").length > 0 ? (
+                            <div className="flex flex-wrap gap-1 max-w-[180px]">
+                              {kw.serp_features.filter((f: string) => f && f !== "organic" && f !== "paid").slice(0, 4).map((f: string) => (
+                                <span key={f} className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
+                                  {f.replace(/_/g, " ")}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
                         </td>
                         <td className="py-4 font-mono text-slate-700 font-semibold">
                           {(kw.impressions ?? kw.volume) ? formatImpressions(kw.impressions ?? kw.volume) : "—"}
@@ -267,6 +307,9 @@ export default function KeywordsPage() {
                             </Badge>
                           ) : (
                             <span className="text-slate-300">—</span>
+                          )}
+                          {kw.labs_intent && (
+                            <div className="text-[10px] text-slate-400 mt-1">Labs: {kw.labs_intent}</div>
                           )}
                         </td>
                         <td className="py-4">
@@ -290,6 +333,48 @@ export default function KeywordsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {(relatedOk || related.length > 0 || relatedError) && (
+        <Card className="border-slate-100 shadow-sm overflow-hidden rounded-3xl">
+          <CardContent className="p-6 space-y-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Related searches</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                DataForSEO Labs “searches related to” this seed (United States, English). Not Search Console and not a recommendation list.
+              </p>
+            </div>
+            {relatedError && <p className="text-xs text-amber-600">{relatedError}</p>}
+            {relatedOk && related.length === 0 ? (
+              <p className="text-sm text-slate-500">No related searches in this sample.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-widest text-slate-400">
+                      <th className="text-left py-2">Keyword</th>
+                      <th className="text-right py-2">Search volume</th>
+                      <th className="text-right py-2">CPC</th>
+                      <th className="text-right py-2">KD</th>
+                      <th className="text-left py-2 pl-4">Competition</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {related.map((row: any) => (
+                      <tr key={row.keyword} className="border-t border-slate-50">
+                        <td className="py-2 font-medium text-slate-900">{row.keyword || "—"}</td>
+                        <td className="py-2 text-right tabular-nums">{row.search_volume ? formatImpressions(row.search_volume) : "—"}</td>
+                        <td className="py-2 text-right tabular-nums">{Number(row.cpc) > 0 ? `$${Number(row.cpc).toFixed(2)}` : "—"}</td>
+                        <td className="py-2 text-right tabular-nums">{row.kd ? row.kd : "—"}</td>
+                        <td className="py-2 pl-4 text-[10px] font-bold uppercase tracking-widest text-slate-600">{row.competition_level || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {ideas.length > 0 && (
         <Card className="border-slate-100 shadow-sm overflow-hidden rounded-3xl">

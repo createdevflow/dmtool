@@ -96,7 +96,7 @@ func TestKeywordOverviewParsesMockAPI(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"keyword":"Buy Widgets","keyword_info":{"search_volume":2200,"cpc":1.5},"keyword_properties":{"keyword_difficulty":44}},{"keyword":"cheap widgets","keyword_info":{"search_volume":80,"cpc":0.2,"keyword_difficulty":12}}]}]}]}`))
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"keyword":"Buy Widgets","keyword_info":{"search_volume":2200,"cpc":1.5,"competition":0.42,"competition_level":"MEDIUM","monthly_searches":[{"year":2026,"month":9,"search_volume":2100},{"year":2026,"month":8,"search_volume":1900}],"search_volume_trend":{"monthly":12}},"keyword_properties":{"keyword_difficulty":44},"search_intent_info":{"main_intent":"commercial"},"serp_info":{"serp_item_types":["organic","featured_snippet","people_also_ask"]}},{"keyword":"cheap widgets","keyword_info":{"search_volume":80,"cpc":0.2,"keyword_difficulty":12}}]}]}]}`))
 	}))
 	t.Cleanup(srv.Close)
 	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
@@ -108,9 +108,74 @@ func TestKeywordOverviewParsesMockAPI(t *testing.T) {
 	if buy.SearchVolume != 2200 || buy.CPC != 1.5 || buy.KD != 44 {
 		t.Fatalf("buy=%+v", buy)
 	}
+	if buy.CompetitionLevel != "MEDIUM" || buy.LabsIntent != "commercial" {
+		t.Fatalf("extras=%+v", buy)
+	}
+	if buy.TrendMonthly == nil || *buy.TrendMonthly != 12 {
+		t.Fatalf("trend=%v", buy.TrendMonthly)
+	}
+	if len(buy.SerpFeatures) != 3 || buy.SerpFeatures[1] != "featured_snippet" {
+		t.Fatalf("serp=%v", buy.SerpFeatures)
+	}
+	if len(buy.MonthlySearches) != 2 || buy.MonthlySearches[0].SearchVolume != 2100 {
+		t.Fatalf("monthly=%v", buy.MonthlySearches)
+	}
 	cheap := got["cheap widgets"]
 	if cheap.SearchVolume != 80 || cheap.KD != 12 {
 		t.Fatalf("cheap=%+v", cheap)
+	}
+}
+
+func TestRelatedKeywordsUnconfigured(t *testing.T) {
+	svc := NewDataForSEOService("", "")
+	_, err := svc.RelatedKeywords(context.Background(), "widgets")
+	if err != ErrDataForSEONotConfigured {
+		t.Fatalf("err=%v want ErrDataForSEONotConfigured", err)
+	}
+}
+
+func TestRelatedKeywordsParsesMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "related_keywords") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[
+			{"keyword_data":{"keyword":"widgets","keyword_info":{"search_volume":5000},"keyword_properties":{"keyword_difficulty":40}}},
+			{"keyword_data":{"keyword":"best widgets","keyword_info":{"search_volume":880,"cpc":1.1,"competition_level":"LOW"},"keyword_properties":{"keyword_difficulty":21}}}
+		]}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.RelatedKeywords(context.Background(), "Widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.RelatedOK || got.Seed != "widgets" {
+		t.Fatalf("got=%+v", got)
+	}
+	if len(got.Related) != 1 || got.Related[0].Keyword != "best widgets" || got.Related[0].SearchVolume != 880 || got.Related[0].KD != 21 {
+		t.Fatalf("related=%+v (seed itself must be skipped)", got.Related)
+	}
+}
+
+func TestRelatedKeywordsErrorDoesNotInvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.RelatedKeywords(context.Background(), "widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RelatedOK || len(got.Related) != 0 {
+		t.Fatalf("must not invent related keywords, got %+v", got.Related)
+	}
+	if got.RelatedError == "" {
+		t.Fatal("expected related_error")
 	}
 }
 

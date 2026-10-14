@@ -17,6 +17,7 @@ type KeywordResult struct {
 	SearchVolume int     `json:"search_volume"`           // DataForSEO Labs monthly volume; 0 if unknown
 	CPC          float64 `json:"cpc"`                     // DataForSEO Labs CPC USD; 0 if unknown
 	LabsEnriched bool    `json:"labs_enriched"`           // true after a successful Labs overview call
+	LabsExtras   string  `gorm:"type:text" json:"-"`      // JSON: competition, SERP features, monthly searches
 	KD           int     `json:"kd"`                      // keyword difficulty 0-100 (0 = unknown; not invented)
 	Position     float64 `json:"position"`                // current SERP position (GSC)
 }

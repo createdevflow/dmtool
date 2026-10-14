@@ -35,6 +35,7 @@ type DataForSEOService interface {
 	DomainExplorer(ctx context.Context, domain string) (DomainExplorerResult, error)
 	AIVisibility(ctx context.Context, domain string) (AIVisibilityResult, error)
 	KeywordOverview(ctx context.Context, keywords []string) (map[string]KeywordLabsMetrics, error)
+	RelatedKeywords(ctx context.Context, seed string) (RelatedKeywordsResult, error)
 	KeywordGap(ctx context.Context, target, competitor string) (KeywordGapResult, error)
 	DomainCompare(ctx context.Context, target, competitor string) (DomainCompareResult, error)
 	ContentGap(ctx context.Context, target, competitor string) (ContentGapResult, error)
@@ -143,9 +144,10 @@ func (s *dataForSEO) AIVisibility(ctx context.Context, domain string) (AIVisibil
 	return out, nil
 }
 
-// KeywordOverview returns Labs search volume, CPC, and KD for the given
-// keywords (Google United States). Missing keywords are omitted — zeros
-// are not invented. Results are not written to dashboard metrics.
+// KeywordOverview returns Labs search volume, CPC, KD, competition, SERP
+// features, and monthly search trend for the given keywords (Google
+// United States). Missing keywords are omitted — zeros are not invented.
+// Results are not written to dashboard metrics.
 func (s *dataForSEO) KeywordOverview(ctx context.Context, keywords []string) (map[string]KeywordLabsMetrics, error) {
 	out := map[string]KeywordLabsMetrics{}
 	if !s.Configured() {
@@ -159,7 +161,7 @@ func (s *dataForSEO) KeywordOverview(ctx context.Context, keywords []string) (ma
 		"keywords":          cleaned,
 		"location_code":     DataForSEOLocation,
 		"language_code":     DataForSEOLanguage,
-		"include_serp_info": false,
+		"include_serp_info": true,
 	})
 	if err != nil {
 		return out, err
@@ -183,12 +185,111 @@ func (s *dataForSEO) KeywordOverview(ctx context.Context, keywords []string) (ma
 			kd = item.KeywordInfo.KeywordDifficulty
 		}
 		out[kw] = KeywordLabsMetrics{
-			SearchVolume: item.KeywordInfo.SearchVolume,
-			CPC:          item.KeywordInfo.CPC,
-			KD:           kd,
+			SearchVolume:     item.KeywordInfo.SearchVolume,
+			CPC:              item.KeywordInfo.CPC,
+			KD:               kd,
+			Competition:      item.KeywordInfo.Competition,
+			CompetitionLevel: strings.ToUpper(strings.TrimSpace(item.KeywordInfo.CompetitionLevel)),
+			LabsIntent:       strings.ToLower(strings.TrimSpace(item.SearchIntentInfo.MainIntent)),
+			SerpFeatures:     cleanSerpFeatures(item.SerpInfo.SerpItemTypes),
+			MonthlySearches:  copyMonthlySearches(item.KeywordInfo.MonthlySearches),
+			TrendMonthly:     item.KeywordInfo.SearchVolumeTrend.Monthly,
 		}
 	}
 	return out, nil
+}
+
+// RelatedKeywords returns Labs "searches related to" the seed (Google US).
+// Empty related is valid. Results are not written to dashboard metrics.
+func (s *dataForSEO) RelatedKeywords(ctx context.Context, seed string) (RelatedKeywordsResult, error) {
+	out := RelatedKeywordsResult{
+		Source:       "dataforseo",
+		LocationCode: DataForSEOLocation,
+		LocationName: DataForSEOLocationName,
+		LanguageCode: DataForSEOLanguage,
+		FetchedAt:    time.Now().UTC(),
+		Related:      []RelatedKeyword{},
+	}
+	if !s.Configured() {
+		return out, ErrDataForSEONotConfigured
+	}
+	cleaned := uniqueKeywordList([]string{seed}, 1)
+	if len(cleaned) == 0 {
+		return out, fmt.Errorf("invalid keyword")
+	}
+	out.Seed = cleaned[0]
+	raw, err := s.postLive(ctx, "/v3/dataforseo_labs/google/related_keywords/live", map[string]any{
+		"keyword":           out.Seed,
+		"location_code":     DataForSEOLocation,
+		"language_code":     DataForSEOLanguage,
+		"depth":             1,
+		"limit":             rankedKeywordLimit,
+		"include_serp_info": false,
+	})
+	if err != nil {
+		out.RelatedError = err.Error()
+		return out, nil
+	}
+	var wrap []struct {
+		Items []struct {
+			KeywordData relatedKeywordData `json:"keyword_data"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		out.RelatedError = err.Error()
+		return out, nil
+	}
+	out.RelatedOK = true
+	if len(wrap) == 0 {
+		return out, nil
+	}
+	for _, item := range wrap[0].Items {
+		kw := strings.ToLower(strings.TrimSpace(item.KeywordData.Keyword))
+		if kw == "" || kw == out.Seed {
+			continue
+		}
+		kd := item.KeywordData.KeywordProperties.KeywordDifficulty
+		if kd == 0 {
+			kd = item.KeywordData.KeywordInfo.KeywordDifficulty
+		}
+		out.Related = append(out.Related, RelatedKeyword{
+			Keyword:          kw,
+			SearchVolume:     item.KeywordData.KeywordInfo.SearchVolume,
+			CPC:              item.KeywordData.KeywordInfo.CPC,
+			KD:               kd,
+			CompetitionLevel: strings.ToUpper(strings.TrimSpace(item.KeywordData.KeywordInfo.CompetitionLevel)),
+		})
+	}
+	return out, nil
+}
+
+func cleanSerpFeatures(raw []string) []string {
+	out := make([]string, 0, len(raw))
+	seen := map[string]bool{}
+	for _, v := range raw {
+		s := strings.ToLower(strings.TrimSpace(v))
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+func copyMonthlySearches(raw []monthlySearchRow) []MonthlySearch {
+	out := make([]MonthlySearch, 0, len(raw))
+	for _, row := range raw {
+		if row.Year == 0 || row.Month < 1 || row.Month > 12 {
+			continue
+		}
+		out = append(out, MonthlySearch{
+			Year:         row.Year,
+			Month:        row.Month,
+			SearchVolume: row.SearchVolume,
+		})
+	}
+	return out
 }
 
 // KeywordGap compares two domains via Labs domain_intersection (Google US).
@@ -1122,9 +1223,46 @@ type LLMSourceDomain struct {
 }
 
 type KeywordLabsMetrics struct {
-	SearchVolume int     `json:"search_volume"`
-	CPC          float64 `json:"cpc"`
-	KD           int     `json:"kd"`
+	SearchVolume     int             `json:"search_volume"`
+	CPC              float64         `json:"cpc"`
+	KD               int             `json:"kd"`
+	Competition      float64         `json:"competition"`
+	CompetitionLevel string          `json:"competition_level"`
+	LabsIntent       string          `json:"labs_intent"`
+	SerpFeatures     []string        `json:"serp_features"`
+	MonthlySearches  []MonthlySearch `json:"monthly_searches"`
+	TrendMonthly     *int            `json:"trend_monthly,omitempty"`
+}
+
+type MonthlySearch struct {
+	Year         int `json:"year"`
+	Month        int `json:"month"`
+	SearchVolume int `json:"search_volume"`
+}
+
+type RelatedKeyword struct {
+	Keyword          string  `json:"keyword"`
+	SearchVolume     int     `json:"search_volume"`
+	CPC              float64 `json:"cpc"`
+	KD               int     `json:"kd"`
+	CompetitionLevel string  `json:"competition_level"`
+}
+
+type RelatedKeywordsResult struct {
+	Seed         string           `json:"seed"`
+	Source       string           `json:"source"`
+	LocationCode int              `json:"location_code"`
+	LocationName string           `json:"location_name"`
+	LanguageCode string           `json:"language_code"`
+	Related      []RelatedKeyword `json:"related"`
+	RelatedOK    bool             `json:"related_ok"`
+	RelatedError string           `json:"related_error,omitempty"`
+	FetchedAt    time.Time        `json:"fetched_at"`
+	Cached       bool             `json:"cached"`
+}
+
+func (r RelatedKeywordsResult) HasAnyData() bool {
+	return r.RelatedOK
 }
 
 type KeywordGapResult struct {
@@ -1349,12 +1487,43 @@ type domainIntersectionRow struct {
 	} `json:"second_domain_serp_element"`
 }
 
+type monthlySearchRow struct {
+	Year         int `json:"year"`
+	Month        int `json:"month"`
+	SearchVolume int `json:"search_volume"`
+}
+
 type keywordOverviewRow struct {
+	Keyword     string `json:"keyword"`
+	KeywordInfo struct {
+		SearchVolume      int                `json:"search_volume"`
+		CPC               float64            `json:"cpc"`
+		KeywordDifficulty int                `json:"keyword_difficulty"`
+		Competition       float64            `json:"competition"`
+		CompetitionLevel  string             `json:"competition_level"`
+		MonthlySearches   []monthlySearchRow `json:"monthly_searches"`
+		SearchVolumeTrend struct {
+			Monthly *int `json:"monthly"`
+		} `json:"search_volume_trend"`
+	} `json:"keyword_info"`
+	KeywordProperties struct {
+		KeywordDifficulty int `json:"keyword_difficulty"`
+	} `json:"keyword_properties"`
+	SearchIntentInfo struct {
+		MainIntent string `json:"main_intent"`
+	} `json:"search_intent_info"`
+	SerpInfo struct {
+		SerpItemTypes []string `json:"serp_item_types"`
+	} `json:"serp_info"`
+}
+
+type relatedKeywordData struct {
 	Keyword     string `json:"keyword"`
 	KeywordInfo struct {
 		SearchVolume      int     `json:"search_volume"`
 		CPC               float64 `json:"cpc"`
 		KeywordDifficulty int     `json:"keyword_difficulty"`
+		CompetitionLevel  string  `json:"competition_level"`
 	} `json:"keyword_info"`
 	KeywordProperties struct {
 		KeywordDifficulty int `json:"keyword_difficulty"`

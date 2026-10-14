@@ -167,7 +167,8 @@ func (h *SEOHandler) Keywords(c *gin.Context) {
 	// Check cache. GET never calls DataForSEO — Labs volume is loaded on Generate.
 	cached, fresh, _ := h.seoRepo.FindKeywords(pid, seed)
 	if fresh && len(cached) > 0 {
-		utils.Success(c, keywordListJSON(cached, "cache", seed, h.dataForSEOReady()), nil)
+		related, _ := h.cachedRelatedKeywords(seed)
+		utils.Success(c, keywordListJSON(cached, "cache", seed, h.dataForSEOReady(), related), nil)
 		return
 	}
 
@@ -177,7 +178,8 @@ func (h *SEOHandler) Keywords(c *gin.Context) {
 		h.seoRepo.UpsertKeywords(keywords)
 	}
 
-	utils.Success(c, keywordListJSON(keywords, source, seed, h.dataForSEOReady()), nil)
+	related, _ := h.cachedRelatedKeywords(seed)
+	utils.Success(c, keywordListJSON(keywords, source, seed, h.dataForSEOReady(), related), nil)
 }
 
 // KeywordsPost handles POST /seo/keywords with body {project_id, seed}
@@ -210,7 +212,8 @@ func (h *SEOHandler) KeywordsPost(c *gin.Context) {
 			cached = h.enrichKeywordsLabs(c.Request.Context(), cached)
 			_ = h.seoRepo.UpsertKeywords(cached)
 		}
-		utils.Success(c, keywordListJSON(cached, "cache", seed, h.dataForSEOReady()), nil)
+		related, _, _ := h.loadRelatedKeywords(c.Request.Context(), seed, false)
+		utils.Success(c, keywordListJSON(cached, "cache", seed, h.dataForSEOReady(), related), nil)
 		return
 	}
 
@@ -221,7 +224,8 @@ func (h *SEOHandler) KeywordsPost(c *gin.Context) {
 		h.seoRepo.UpsertKeywords(keywords)
 	}
 
-	utils.Success(c, keywordListJSON(keywords, source, seed, h.dataForSEOReady()), nil)
+	related, _, _ := h.loadRelatedKeywords(c.Request.Context(), seed, false)
+	utils.Success(c, keywordListJSON(keywords, source, seed, h.dataForSEOReady(), related), nil)
 }
 
 // resolveKeywords tries GSC first, then falls back to autocomplete.
@@ -436,34 +440,73 @@ func markupStatusFromIssues(issues []models.SEOIssue, healthScore int, updated t
 func keywordPublicList(kws []models.KeywordResult) []gin.H {
 	out := make([]gin.H, 0, len(kws))
 	for _, k := range kws {
+		extras := parseLabsExtras(k.LabsExtras)
+		serp := extras.SerpFeatures
+		if serp == nil {
+			serp = []string{}
+		}
+		monthly := extras.MonthlySearches
+		if monthly == nil {
+			monthly = []services.MonthlySearch{}
+		}
 		out = append(out, gin.H{
-			"id":            k.ID,
-			"keyword":       k.Keyword,
-			"seed":          k.Seed,
-			"volume":        k.Volume,
-			"impressions":   k.Volume,
-			"clicks":        k.Clicks,
-			"search_volume": k.SearchVolume,
-			"cpc":           k.CPC,
-			"labs_enriched": k.LabsEnriched,
-			"kd":            k.KD,
-			"position":      k.Position,
-			"intent":        services.GuessSearchIntent(k.Keyword),
+			"id":                k.ID,
+			"keyword":           k.Keyword,
+			"seed":              k.Seed,
+			"volume":            k.Volume,
+			"impressions":       k.Volume,
+			"clicks":            k.Clicks,
+			"search_volume":     k.SearchVolume,
+			"cpc":               k.CPC,
+			"labs_enriched":     k.LabsEnriched,
+			"kd":                k.KD,
+			"position":          k.Position,
+			"intent":            services.GuessSearchIntent(k.Keyword),
+			"competition":       extras.Competition,
+			"competition_level": extras.CompetitionLevel,
+			"labs_intent":       extras.LabsIntent,
+			"serp_features":     serp,
+			"monthly_searches":  monthly,
+			"trend_monthly":     extras.TrendMonthly,
 		})
 	}
 	return out
 }
 
-func keywordListJSON(kws []models.KeywordResult, source, seed string, labsConfigured bool) gin.H {
+func parseLabsExtras(raw string) services.KeywordLabsMetrics {
+	if strings.TrimSpace(raw) == "" {
+		return services.KeywordLabsMetrics{SerpFeatures: []string{}, MonthlySearches: []services.MonthlySearch{}}
+	}
+	var extras services.KeywordLabsMetrics
+	if json.Unmarshal([]byte(raw), &extras) != nil {
+		return services.KeywordLabsMetrics{SerpFeatures: []string{}, MonthlySearches: []services.MonthlySearch{}}
+	}
+	if extras.SerpFeatures == nil {
+		extras.SerpFeatures = []string{}
+	}
+	if extras.MonthlySearches == nil {
+		extras.MonthlySearches = []services.MonthlySearch{}
+	}
+	return extras
+}
+
+func keywordListJSON(kws []models.KeywordResult, source, seed string, labsConfigured bool, related services.RelatedKeywordsResult) gin.H {
 	msg := "Impressions are Google Search Console, not search volume."
 	if labsConfigured {
-		msg = "Search volume, CPC, and difficulty are DataForSEO Labs (Google United States). Impressions stay Search Console. Generate spends vendor credits; results cache 24 hours."
+		msg = "Search volume, CPC, difficulty, competition, SERP features, and related searches are DataForSEO Labs (Google United States). Impressions stay Search Console. Generate spends vendor credits; results cache 24 hours."
 	} else {
-		msg = "DataForSEO is not connected. Search volume, CPC, and difficulty stay empty. Impressions are Search Console when present."
+		msg = "DataForSEO is not connected. Search volume, CPC, difficulty, SERP features, and related searches stay empty. Impressions are Search Console when present."
+	}
+	rel := related.Related
+	if rel == nil {
+		rel = []services.RelatedKeyword{}
 	}
 	return gin.H{
 		"keywords":        keywordPublicList(kws),
 		"ideas":           ideasForKeywordSource(kws, source),
+		"related":         rel,
+		"related_ok":      related.RelatedOK,
+		"related_error":   related.RelatedError,
 		"source":          source,
 		"seed":            seed,
 		"count":           len(kws),
@@ -506,8 +549,93 @@ func (h *SEOHandler) enrichKeywordsLabs(ctx context.Context, kws []models.Keywor
 		kws[i].SearchVolume = m.SearchVolume
 		kws[i].CPC = m.CPC
 		kws[i].KD = m.KD
+		if m.SerpFeatures == nil {
+			m.SerpFeatures = []string{}
+		}
+		if m.MonthlySearches == nil {
+			m.MonthlySearches = []services.MonthlySearch{}
+		}
+		raw, _ := json.Marshal(services.KeywordLabsMetrics{
+			Competition:      m.Competition,
+			CompetitionLevel: m.CompetitionLevel,
+			LabsIntent:       m.LabsIntent,
+			SerpFeatures:     m.SerpFeatures,
+			MonthlySearches:  m.MonthlySearches,
+			TrendMonthly:     m.TrendMonthly,
+		})
+		kws[i].LabsExtras = string(raw)
 	}
 	return kws
+}
+
+func (h *SEOHandler) cachedRelatedKeywords(seed string) (services.RelatedKeywordsResult, bool) {
+	cleaned := strings.ToLower(strings.TrimSpace(seed))
+	if cleaned == "" || h.seoRepo == nil {
+		return services.RelatedKeywordsResult{Related: []services.RelatedKeyword{}}, false
+	}
+	snap, err := h.seoRepo.FindVendorKeywordRelatedSnapshot(cleaned, services.DataForSEOLocation, services.DataForSEOLanguage)
+	if err != nil || snap == nil || snap.Payload == "" {
+		return services.RelatedKeywordsResult{Related: []services.RelatedKeyword{}}, false
+	}
+	var cached services.RelatedKeywordsResult
+	if json.Unmarshal([]byte(snap.Payload), &cached) != nil || !cached.HasAnyData() {
+		return services.RelatedKeywordsResult{Related: []services.RelatedKeyword{}}, false
+	}
+	cached.Cached = true
+	if cached.Related == nil {
+		cached.Related = []services.RelatedKeyword{}
+	}
+	return cached, true
+}
+
+func (h *SEOHandler) loadRelatedKeywords(ctx context.Context, seed string, refresh bool) (services.RelatedKeywordsResult, bool, error) {
+	empty := services.RelatedKeywordsResult{Related: []services.RelatedKeyword{}}
+	if !h.dataForSEOReady() {
+		return empty, false, nil
+	}
+	cleaned := strings.ToLower(strings.TrimSpace(seed))
+	if cleaned == "" {
+		return empty, false, nil
+	}
+	if h.seoRepo != nil && !refresh {
+		if cached, ok := h.cachedRelatedKeywords(cleaned); ok {
+			snap, err := h.seoRepo.FindVendorKeywordRelatedSnapshot(cleaned, services.DataForSEOLocation, services.DataForSEOLanguage)
+			if err == nil && snap != nil && time.Since(snap.FetchedAt) < vendorSnapshotTTL {
+				return cached, true, nil
+			}
+		}
+	}
+	result, err := h.dataForSEOSvc.RelatedKeywords(ctx, cleaned)
+	if err != nil {
+		return result, false, err
+	}
+	if result.Seed == "" {
+		result.Seed = cleaned
+	}
+	if result.LocationCode == 0 {
+		result.LocationCode = services.DataForSEOLocation
+	}
+	if result.LanguageCode == "" {
+		result.LanguageCode = services.DataForSEOLanguage
+	}
+	if result.Source == "" {
+		result.Source = "dataforseo"
+	}
+	if result.FetchedAt.IsZero() {
+		result.FetchedAt = time.Now().UTC()
+	}
+	if h.seoRepo != nil && result.HasAnyData() {
+		raw, _ := json.Marshal(result)
+		_ = h.seoRepo.SaveVendorKeywordRelatedSnapshot(&models.VendorKeywordRelatedSnapshot{
+			Seed:         result.Seed,
+			LocationCode: result.LocationCode,
+			LanguageCode: result.LanguageCode,
+			Source:       result.Source,
+			Payload:      string(raw),
+			FetchedAt:    result.FetchedAt,
+		})
+	}
+	return result, false, nil
 }
 
 func ideasForKeywordSource(kws []models.KeywordResult, source string) []gin.H {

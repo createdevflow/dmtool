@@ -24,9 +24,11 @@ type configuredDFS struct {
 	citationResult services.CitationGapResult
 	backlinkResult services.BacklinkGapResult
 	labs           map[string]services.KeywordLabsMetrics
+	relatedResult  services.RelatedKeywordsResult
 	err            error
 	calls          int
 	overviewCalls  int
+	relatedCalls   int
 }
 
 func (f *configuredDFS) Configured() bool { return true }
@@ -50,6 +52,13 @@ func (f *configuredDFS) KeywordOverview(_ context.Context, _ []string) (map[stri
 		return map[string]services.KeywordLabsMetrics{}, nil
 	}
 	return f.labs, nil
+}
+func (f *configuredDFS) RelatedKeywords(_ context.Context, _ string) (services.RelatedKeywordsResult, error) {
+	f.relatedCalls++
+	if f.err != nil {
+		return f.relatedResult, f.err
+	}
+	return f.relatedResult, nil
 }
 func (f *configuredDFS) KeywordGap(_ context.Context, _, _ string) (services.KeywordGapResult, error) {
 	f.calls++

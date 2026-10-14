@@ -51,6 +51,7 @@ func RunMigrations(database *gorm.DB) error {
 		&models.VendorContentGapSnapshot{},
 		&models.VendorCitationGapSnapshot{},
 		&models.VendorBacklinkGapSnapshot{},
+		&models.VendorKeywordRelatedSnapshot{},
 	}
 
 	migrator := database.Migrator()
@@ -83,6 +84,9 @@ func RunMigrations(database *gorm.DB) error {
 		return err
 	}
 	if err := addKeywordLabsColumns(migrator); err != nil {
+		return err
+	}
+	if err := addKeywordLabsExtrasColumn(migrator); err != nil {
 		return err
 	}
 
@@ -169,6 +173,17 @@ func addKeywordLabsColumns(migrator gorm.Migrator) error {
 		}
 		log.Printf("[migrate] added column keyword_results.%s\n", c.col)
 	}
+	return nil
+}
+
+func addKeywordLabsExtrasColumn(migrator gorm.Migrator) error {
+	if !migrator.HasTable("keyword_results") || migrator.HasColumn(&models.KeywordResult{}, "labs_extras") {
+		return nil
+	}
+	if err := migrator.AddColumn(&models.KeywordResult{}, "LabsExtras"); err != nil {
+		return err
+	}
+	log.Println("[migrate] added column keyword_results.labs_extras")
 	return nil
 }
 

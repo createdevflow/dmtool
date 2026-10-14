@@ -1315,3 +1315,161 @@ func (h *SEOHandler) loadKeywordGap(ctx context.Context, target, competitor stri
 	}
 	return result, false, nil
 }
+
+// DomainCompare returns DataForSEO Labs rank overview and backlink summary
+// for a target/competitor pair. Cache-only unless fetch=1 or refresh=1.
+// Does not write vendor counts into dashboard metrics.
+func (h *SEOHandler) DomainCompare(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	domain := c.Query("domain")
+	if domain == "" {
+		domain = project.URL
+	}
+	competitor := strings.TrimSpace(c.Query("competitor"))
+	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
+	wantFetch := refresh || c.Query("fetch") == "1" || strings.EqualFold(c.Query("fetch"), "true")
+	host := services.NormalizeDomain(domain)
+	rival := services.NormalizeDomain(competitor)
+
+	if !h.dataForSEOReady() {
+		utils.Success(c, domainCompareEmptyJSON(host, rival, false, "DataForSEO is not connected. Set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD."), nil)
+		return
+	}
+
+	if rival == "" {
+		utils.Success(c, domainCompareEmptyJSON(host, "", true, "Enter a competitor domain to compare. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+	if host == "" {
+		utils.Success(c, domainCompareEmptyJSON("", rival, true, "invalid domain"), nil)
+		return
+	}
+	if host == rival {
+		utils.Success(c, domainCompareEmptyJSON(host, rival, true, "competitor must be a different domain"), nil)
+		return
+	}
+
+	if !wantFetch {
+		if cached, ok := h.cachedDomainCompare(host, rival); ok {
+			utils.Success(c, domainCompareJSON(cached, true), nil)
+			return
+		}
+		utils.Success(c, domainCompareEmptyJSON(host, rival, true, "Click Look up to query DataForSEO Labs rank overview and backlinks. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+
+	result, cached, err := h.loadDomainCompare(c.Request.Context(), host, rival, refresh)
+	if err != nil {
+		if errors.Is(err, services.ErrDataForSEONotConfigured) {
+			utils.Success(c, domainCompareEmptyJSON(host, rival, false, "DataForSEO is not connected."), nil)
+			return
+		}
+		utils.Success(c, domainCompareEmptyJSON(host, rival, true, err.Error()), nil)
+		return
+	}
+	result.Cached = cached
+	utils.Success(c, domainCompareJSON(result, cached), nil)
+}
+
+func domainCompareEmptyJSON(target, competitor string, configured bool, message string) gin.H {
+	return gin.H{
+		"available":       false,
+		"configured":      configured,
+		"source":          "dataforseo",
+		"target":          target,
+		"competitor":      competitor,
+		"target_side":     services.DomainCompareSide{Domain: target},
+		"competitor_side": services.DomainCompareSide{Domain: competitor},
+		"message":         message,
+	}
+}
+
+func domainCompareJSON(result services.DomainCompareResult, cached bool) gin.H {
+	return gin.H{
+		"available":       result.HasAnyData(),
+		"configured":      true,
+		"source":          result.Source,
+		"target":          result.Target,
+		"competitor":      result.Competitor,
+		"location_code":   result.LocationCode,
+		"location_name":   result.LocationName,
+		"language_code":   result.LanguageCode,
+		"target_side":     result.TargetSide,
+		"competitor_side": result.CompetitorSide,
+		"cached":          cached,
+		"fetched_at":      result.FetchedAt.Format(time.RFC3339),
+		"message":         "DataForSEO Labs organic estimates (United States, English) and Backlinks index. Not Search Console and not Moz Domain Authority.",
+	}
+}
+
+func (h *SEOHandler) cachedDomainCompare(target, competitor string) (services.DomainCompareResult, bool) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" || h.seoRepo == nil {
+		return services.DomainCompareResult{}, false
+	}
+	snap, err := h.seoRepo.FindVendorDomainCompareSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+	if err != nil || snap == nil || snap.Payload == "" {
+		return services.DomainCompareResult{}, false
+	}
+	var cached services.DomainCompareResult
+	if json.Unmarshal([]byte(snap.Payload), &cached) != nil || !cached.HasAnyData() {
+		return services.DomainCompareResult{}, false
+	}
+	cached.Cached = true
+	return cached, true
+}
+
+func (h *SEOHandler) loadDomainCompare(ctx context.Context, target, competitor string, refresh bool) (services.DomainCompareResult, bool, error) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return services.DomainCompareResult{}, false, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return services.DomainCompareResult{}, false, fmt.Errorf("competitor must be a different domain")
+	}
+	if h.seoRepo != nil && !refresh {
+		snap, err := h.seoRepo.FindVendorDomainCompareSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+		if err == nil && snap != nil && time.Since(snap.FetchedAt) < vendorSnapshotTTL && snap.Payload != "" {
+			var cached services.DomainCompareResult
+			if json.Unmarshal([]byte(snap.Payload), &cached) == nil && cached.HasAnyData() {
+				cached.Cached = true
+				return cached, true, nil
+			}
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[seo] domain compare snapshot read: %v", err)
+		}
+	}
+
+	result, err := h.dataForSEOSvc.DomainCompare(ctx, host, rival)
+	if err != nil {
+		return result, false, err
+	}
+	if h.seoRepo != nil && result.HasAnyData() {
+		raw, _ := json.Marshal(result)
+		_ = h.seoRepo.SaveVendorDomainCompareSnapshot(&models.VendorDomainCompareSnapshot{
+			Target:       result.Target,
+			Competitor:   result.Competitor,
+			LocationCode: result.LocationCode,
+			LanguageCode: result.LanguageCode,
+			Source:       result.Source,
+			Payload:      string(raw),
+			FetchedAt:    result.FetchedAt,
+		})
+	}
+	return result, false, nil
+}

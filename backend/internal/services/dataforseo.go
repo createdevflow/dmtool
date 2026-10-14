@@ -35,6 +35,7 @@ type DataForSEOService interface {
 	AIVisibility(ctx context.Context, domain string) (AIVisibilityResult, error)
 	KeywordOverview(ctx context.Context, keywords []string) (map[string]KeywordLabsMetrics, error)
 	KeywordGap(ctx context.Context, target, competitor string) (KeywordGapResult, error)
+	DomainCompare(ctx context.Context, target, competitor string) (DomainCompareResult, error)
 }
 
 type dataForSEO struct {
@@ -296,6 +297,52 @@ func (s *dataForSEO) fillKeywordGapOverlap(ctx context.Context, host, rival stri
 		})
 	}
 	return nil
+}
+
+// DomainCompare pulls Labs rank overview and backlink summary for two
+// domains. Sections fail independently. Results are not written to dashboard metrics.
+func (s *dataForSEO) DomainCompare(ctx context.Context, target, competitor string) (DomainCompareResult, error) {
+	out := DomainCompareResult{
+		Source:       "dataforseo",
+		LocationCode: DataForSEOLocation,
+		LocationName: DataForSEOLocationName,
+		LanguageCode: DataForSEOLanguage,
+		FetchedAt:    time.Now().UTC(),
+	}
+	if !s.Configured() {
+		return out, ErrDataForSEONotConfigured
+	}
+	host := NormalizeDomain(target)
+	rival := NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return out, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return out, fmt.Errorf("competitor must be a different domain")
+	}
+	out.Target = host
+	out.Competitor = rival
+	out.TargetSide = s.compareSide(ctx, host)
+	out.CompetitorSide = s.compareSide(ctx, rival)
+	return out, nil
+}
+
+func (s *dataForSEO) compareSide(ctx context.Context, host string) DomainCompareSide {
+	side := DomainCompareSide{Domain: host}
+	tmp := DomainExplorerResult{}
+	if err := s.fillOrganicOverview(ctx, host, &tmp); err != nil {
+		side.OrganicError = err.Error()
+	} else {
+		side.OrganicOK = true
+		side.Organic = tmp.Organic
+	}
+	if err := s.fillBacklinks(ctx, host, &tmp); err != nil {
+		side.BacklinksError = err.Error()
+	} else {
+		side.BacklinksOK = true
+		side.Backlinks = tmp.Backlinks
+	}
+	return side
 }
 
 func parseGapItems(raw json.RawMessage) ([]parsedGapRow, error) {
@@ -830,6 +877,37 @@ type KeywordGapResult struct {
 
 func (r KeywordGapResult) HasAnyData() bool {
 	return r.MissingOK || r.OverlapOK
+}
+
+type DomainCompareResult struct {
+	Target         string            `json:"target"`
+	Competitor     string            `json:"competitor"`
+	Source         string            `json:"source"`
+	LocationCode   int               `json:"location_code"`
+	LocationName   string            `json:"location_name"`
+	LanguageCode   string            `json:"language_code"`
+	TargetSide     DomainCompareSide `json:"target_side"`
+	CompetitorSide DomainCompareSide `json:"competitor_side"`
+	FetchedAt      time.Time         `json:"fetched_at"`
+	Cached         bool              `json:"cached"`
+}
+
+func (r DomainCompareResult) HasAnyData() bool {
+	return r.TargetSide.HasAnyData() || r.CompetitorSide.HasAnyData()
+}
+
+type DomainCompareSide struct {
+	Domain         string           `json:"domain"`
+	Organic        OrganicOverview  `json:"organic"`
+	OrganicOK      bool             `json:"organic_ok"`
+	OrganicError   string           `json:"organic_error,omitempty"`
+	Backlinks      BacklinkOverview `json:"backlinks"`
+	BacklinksOK    bool             `json:"backlinks_ok"`
+	BacklinksError string           `json:"backlinks_error,omitempty"`
+}
+
+func (s DomainCompareSide) HasAnyData() bool {
+	return s.OrganicOK || s.BacklinksOK
 }
 
 type GapKeyword struct {

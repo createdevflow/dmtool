@@ -421,6 +421,7 @@ func registerSEORoutes(
 	g.GET("/seo/domain-explorer", h.DomainExplorer)
 	g.GET("/seo/ai-visibility", h.AIVisibility)
 	g.GET("/seo/keyword-gap", h.KeywordGap)
+	g.GET("/seo/domain-compare", h.DomainCompare)
 }
 
 func registerSocialRoutes(

@@ -302,6 +302,105 @@ func TestKeywordGapSectionErrorDoesNotInvent(t *testing.T) {
 	}
 }
 
+func TestDomainCompareUnconfigured(t *testing.T) {
+	svc := NewDataForSEOService("", "")
+	_, err := svc.DomainCompare(context.Background(), "example.com", "rival.com")
+	if err != ErrDataForSEONotConfigured {
+		t.Fatalf("err=%v want ErrDataForSEONotConfigured", err)
+	}
+}
+
+func TestDomainCompareSameDomainRejected(t *testing.T) {
+	svc := &dataForSEO{login: "u", password: "p"}
+	_, err := svc.DomainCompare(context.Background(), "https://www.example.com", "example.com")
+	if err == nil || !strings.Contains(err.Error(), "different domain") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestDomainCompareParsesMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		payload := string(body)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "domain_rank_overview"):
+			if strings.Contains(payload, `"target":"rival.com"`) {
+				_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"target":"rival.com","location_code":2840,"metrics":{"organic":{"pos_1":1,"pos_2_3":2,"pos_4_10":3,"etv":800.2,"count":20},"paid":{"etv":4}}}]}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"target":"example.com","location_code":2840,"metrics":{"organic":{"pos_1":2,"pos_2_3":5,"pos_4_10":10,"etv":1234.5,"count":40},"paid":{"etv":10}}}]}]}`))
+		case strings.Contains(r.URL.Path, "backlinks/summary"):
+			if strings.Contains(payload, `"target":"rival.com"`) {
+				_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"backlinks":50,"referring_domains":8,"rank":200,"backlinks_spam_score":3}]}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"backlinks":99,"referring_domains":12,"rank":371,"backlinks_spam_score":8}]}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := &dataForSEO{login: "user", password: "pass", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.DomainCompare(context.Background(), "https://www.example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Target != "example.com" || got.Competitor != "rival.com" {
+		t.Fatalf("hosts=%s/%s", got.Target, got.Competitor)
+	}
+	you := got.TargetSide
+	if !you.OrganicOK || you.Organic.Count != 40 || you.Organic.ETV != 1234.5 {
+		t.Fatalf("target organic=%+v ok=%v err=%s", you.Organic, you.OrganicOK, you.OrganicError)
+	}
+	if !you.BacklinksOK || you.Backlinks.Backlinks != 99 {
+		t.Fatalf("target backlinks=%+v", you.Backlinks)
+	}
+	them := got.CompetitorSide
+	if !them.OrganicOK || them.Organic.Count != 20 || them.Organic.ETV != 800.2 {
+		t.Fatalf("competitor organic=%+v", them.Organic)
+	}
+	if !them.BacklinksOK || them.Backlinks.ReferringDomains != 8 {
+		t.Fatalf("competitor backlinks=%+v", them.Backlinks)
+	}
+}
+
+func TestDomainCompareSectionErrorDoesNotInvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		payload := string(body)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "domain_rank_overview") && strings.Contains(payload, `"target":"rival.com"`) {
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "domain_rank_overview") {
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"target":"example.com","metrics":{"organic":{"count":9,"etv":11}}}]}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"backlinks":3,"referring_domains":1,"rank":10}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.DomainCompare(context.Background(), "example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.TargetSide.OrganicOK || got.TargetSide.Organic.Count != 9 {
+		t.Fatalf("target organic=%+v", got.TargetSide.Organic)
+	}
+	if got.CompetitorSide.OrganicOK || got.CompetitorSide.Organic.Count != 0 {
+		t.Fatalf("competitor organic should be empty on error, got %+v ok=%v", got.CompetitorSide.Organic, got.CompetitorSide.OrganicOK)
+	}
+	if got.CompetitorSide.OrganicError == "" {
+		t.Fatal("expected competitor organic_error")
+	}
+	if !got.CompetitorSide.BacklinksOK || got.CompetitorSide.Backlinks.Backlinks != 3 {
+		t.Fatalf("competitor backlinks should still succeed, got %+v", got.CompetitorSide.Backlinks)
+	}
+}
+
 func TestPostLiveTaskError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))

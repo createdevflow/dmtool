@@ -19,6 +19,7 @@ type configuredDFS struct {
 	result        services.DomainExplorerResult
 	aiResult      services.AIVisibilityResult
 	gapResult     services.KeywordGapResult
+	compareResult services.DomainCompareResult
 	labs          map[string]services.KeywordLabsMetrics
 	err           error
 	calls         int
@@ -50,6 +51,10 @@ func (f *configuredDFS) KeywordOverview(_ context.Context, _ []string) (map[stri
 func (f *configuredDFS) KeywordGap(_ context.Context, _, _ string) (services.KeywordGapResult, error) {
 	f.calls++
 	return f.gapResult, f.err
+}
+func (f *configuredDFS) DomainCompare(_ context.Context, _, _ string) (services.DomainCompareResult, error) {
+	f.calls++
+	return f.compareResult, f.err
 }
 
 func TestDomainExplorerUnconfigured(t *testing.T) {

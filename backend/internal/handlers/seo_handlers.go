@@ -1821,3 +1821,167 @@ func (h *SEOHandler) loadCitationGap(ctx context.Context, target, competitor str
 	}
 	return result, false, nil
 }
+
+// BacklinkGap returns referring domains that link to the competitor and
+// not to the target. Cache-only unless fetch=1 or refresh=1. Does not
+// write vendor counts into dashboard metrics or invent outreach scores.
+func (h *SEOHandler) BacklinkGap(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	domain := c.Query("domain")
+	if domain == "" {
+		domain = project.URL
+	}
+	competitor := strings.TrimSpace(c.Query("competitor"))
+	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
+	wantFetch := refresh || c.Query("fetch") == "1" || strings.EqualFold(c.Query("fetch"), "true")
+	host := services.NormalizeDomain(domain)
+	rival := services.NormalizeDomain(competitor)
+
+	if !h.dataForSEOReady() {
+		utils.Success(c, backlinkGapEmptyJSON(host, rival, false, "DataForSEO is not connected. Set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD."), nil)
+		return
+	}
+
+	if rival == "" {
+		utils.Success(c, backlinkGapEmptyJSON(host, "", true, "Enter a competitor domain to find referring domains that link to them and not to you. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+	if host == "" {
+		utils.Success(c, backlinkGapEmptyJSON("", rival, true, "invalid domain"), nil)
+		return
+	}
+	if host == rival {
+		utils.Success(c, backlinkGapEmptyJSON(host, rival, true, "competitor must be a different domain"), nil)
+		return
+	}
+
+	if !wantFetch {
+		if cached, ok := h.cachedBacklinkGap(host, rival); ok {
+			utils.Success(c, backlinkGapJSON(cached, true), nil)
+			return
+		}
+		utils.Success(c, backlinkGapEmptyJSON(host, rival, true, "Click Look up to query DataForSEO backlinks domain intersection. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+
+	result, cached, err := h.loadBacklinkGap(c.Request.Context(), host, rival, refresh)
+	if err != nil {
+		if errors.Is(err, services.ErrDataForSEONotConfigured) {
+			utils.Success(c, backlinkGapEmptyJSON(host, rival, false, "DataForSEO is not connected."), nil)
+			return
+		}
+		utils.Success(c, backlinkGapEmptyJSON(host, rival, true, err.Error()), nil)
+		return
+	}
+	result.Cached = cached
+	utils.Success(c, backlinkGapJSON(result, cached), nil)
+}
+
+func backlinkGapEmptyJSON(target, competitor string, configured bool, message string) gin.H {
+	return gin.H{
+		"available":       false,
+		"configured":      configured,
+		"source":          "dataforseo",
+		"target":          target,
+		"competitor":      competitor,
+		"referring":       []services.ReferringDomain{},
+		"intersection_ok": false,
+		"message":         message,
+	}
+}
+
+func backlinkGapJSON(result services.BacklinkGapResult, cached bool) gin.H {
+	referring := result.Referring
+	if referring == nil {
+		referring = []services.ReferringDomain{}
+	}
+	return gin.H{
+		"available":          result.HasAnyData(),
+		"configured":         true,
+		"source":             result.Source,
+		"target":             result.Target,
+		"competitor":         result.Competitor,
+		"location_code":      result.LocationCode,
+		"location_name":      result.LocationName,
+		"language_code":      result.LanguageCode,
+		"referring":          referring,
+		"intersection_ok":    result.IntersectionOK,
+		"intersection_error": result.IntersectionError,
+		"total_count":        result.TotalCount,
+		"cached":             cached,
+		"fetched_at":         result.FetchedAt.Format(time.RFC3339),
+		"message":            "Referring domains that link to the competitor and not to you, via DataForSEO backlinks domain intersection. Rank is DataForSEO Rank, not Moz Domain Authority. Not Search Console and not an outreach list.",
+	}
+}
+
+func (h *SEOHandler) cachedBacklinkGap(target, competitor string) (services.BacklinkGapResult, bool) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" || h.seoRepo == nil {
+		return services.BacklinkGapResult{}, false
+	}
+	snap, err := h.seoRepo.FindVendorBacklinkGapSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+	if err != nil || snap == nil || snap.Payload == "" {
+		return services.BacklinkGapResult{}, false
+	}
+	var cached services.BacklinkGapResult
+	if json.Unmarshal([]byte(snap.Payload), &cached) != nil || !cached.HasAnyData() {
+		return services.BacklinkGapResult{}, false
+	}
+	cached.Cached = true
+	return cached, true
+}
+
+func (h *SEOHandler) loadBacklinkGap(ctx context.Context, target, competitor string, refresh bool) (services.BacklinkGapResult, bool, error) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return services.BacklinkGapResult{}, false, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return services.BacklinkGapResult{}, false, fmt.Errorf("competitor must be a different domain")
+	}
+	if h.seoRepo != nil && !refresh {
+		snap, err := h.seoRepo.FindVendorBacklinkGapSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+		if err == nil && snap != nil && time.Since(snap.FetchedAt) < vendorSnapshotTTL && snap.Payload != "" {
+			var cached services.BacklinkGapResult
+			if json.Unmarshal([]byte(snap.Payload), &cached) == nil && cached.HasAnyData() {
+				cached.Cached = true
+				return cached, true, nil
+			}
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[seo] backlink gap snapshot read: %v", err)
+		}
+	}
+
+	result, err := h.dataForSEOSvc.BacklinkGap(ctx, host, rival)
+	if err != nil {
+		return result, false, err
+	}
+	if h.seoRepo != nil && result.HasAnyData() {
+		raw, _ := json.Marshal(result)
+		_ = h.seoRepo.SaveVendorBacklinkGapSnapshot(&models.VendorBacklinkGapSnapshot{
+			Target:       result.Target,
+			Competitor:   result.Competitor,
+			LocationCode: result.LocationCode,
+			LanguageCode: result.LanguageCode,
+			Source:       result.Source,
+			Payload:      string(raw),
+			FetchedAt:    result.FetchedAt,
+		})
+	}
+	return result, false, nil
+}

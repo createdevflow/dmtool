@@ -23,6 +23,7 @@ const (
 	rankedKeywordLimit     = 15
 	competitorLimit        = 8
 	keywordOverviewLimit   = 30
+	backlinkGapLimit       = 15
 )
 
 // ErrDataForSEONotConfigured is returned when login/password are empty.
@@ -38,6 +39,7 @@ type DataForSEOService interface {
 	DomainCompare(ctx context.Context, target, competitor string) (DomainCompareResult, error)
 	ContentGap(ctx context.Context, target, competitor string) (ContentGapResult, error)
 	CitationGap(ctx context.Context, target, competitor string) (CitationGapResult, error)
+	BacklinkGap(ctx context.Context, target, competitor string) (BacklinkGapResult, error)
 }
 
 type dataForSEO struct {
@@ -531,6 +533,83 @@ func (s *dataForSEO) CitationGap(ctx context.Context, target, competitor string)
 			}
 			out.UniqueSources = append(out.UniqueSources, src)
 		}
+	}
+	return out, nil
+}
+
+// BacklinkGap lists referring domains that link to the competitor and
+// not to the target, via DataForSEO backlinks domain intersection.
+// Rank is DataForSEO Rank, not Moz DA. Results are not written to
+// dashboard metrics and are not an outreach list.
+func (s *dataForSEO) BacklinkGap(ctx context.Context, target, competitor string) (BacklinkGapResult, error) {
+	out := BacklinkGapResult{
+		Source:       "dataforseo",
+		LocationCode: DataForSEOLocation,
+		LocationName: DataForSEOLocationName,
+		LanguageCode: DataForSEOLanguage,
+		FetchedAt:    time.Now().UTC(),
+		Referring:    []ReferringDomain{},
+	}
+	if !s.Configured() {
+		return out, ErrDataForSEONotConfigured
+	}
+	host := NormalizeDomain(target)
+	rival := NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return out, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return out, fmt.Errorf("competitor must be a different domain")
+	}
+	out.Target = host
+	out.Competitor = rival
+
+	raw, err := s.postLive(ctx, "/v3/backlinks/domain_intersection/live", map[string]any{
+		"targets":                    map[string]string{"1": rival},
+		"exclude_targets":            []string{host},
+		"limit":                      backlinkGapLimit,
+		"order_by":                   []string{"1.rank,desc"},
+		"include_subdomains":         false,
+		"exclude_internal_backlinks": true,
+		"backlinks_status_type":      "live",
+	})
+	if err != nil {
+		out.IntersectionError = err.Error()
+		return out, nil
+	}
+	var wrap []struct {
+		TotalCount int `json:"total_count"`
+		Items      []struct {
+			DomainIntersection map[string]backlinkIntersectionHit `json:"domain_intersection"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		out.IntersectionError = err.Error()
+		return out, nil
+	}
+	out.IntersectionOK = true
+	if len(wrap) == 0 {
+		return out, nil
+	}
+	out.TotalCount = wrap[0].TotalCount
+	for _, item := range wrap[0].Items {
+		hit := item.DomainIntersection["1"]
+		domain := strings.TrimSpace(hit.Target)
+		if domain == "" {
+			continue
+		}
+		norm := NormalizeDomain(domain)
+		if norm == host || norm == rival {
+			continue
+		}
+		out.Referring = append(out.Referring, ReferringDomain{
+			Domain:         domain,
+			Rank:           hit.Rank,
+			Backlinks:      hit.Backlinks,
+			ReferringPages: hit.ReferringPages,
+			SpamScore:      hit.BacklinksSpamScore,
+			FirstSeen:      strings.TrimSpace(hit.FirstSeen),
+		})
 	}
 	return out, nil
 }
@@ -1141,6 +1220,43 @@ type CitationGapResult struct {
 
 func (r CitationGapResult) HasAnyData() bool {
 	return r.TargetOK || r.CompetitorOK
+}
+
+type BacklinkGapResult struct {
+	Target            string            `json:"target"`
+	Competitor        string            `json:"competitor"`
+	Source            string            `json:"source"`
+	LocationCode      int               `json:"location_code"`
+	LocationName      string            `json:"location_name"`
+	LanguageCode      string            `json:"language_code"`
+	Referring         []ReferringDomain `json:"referring"`
+	IntersectionOK    bool              `json:"intersection_ok"`
+	IntersectionError string            `json:"intersection_error,omitempty"`
+	TotalCount        int               `json:"total_count"`
+	FetchedAt         time.Time         `json:"fetched_at"`
+	Cached            bool              `json:"cached"`
+}
+
+func (r BacklinkGapResult) HasAnyData() bool {
+	return r.IntersectionOK
+}
+
+type ReferringDomain struct {
+	Domain         string `json:"domain"`
+	Rank           int    `json:"rank"`
+	Backlinks      int    `json:"backlinks"`
+	ReferringPages int    `json:"referring_pages"`
+	SpamScore      int    `json:"spam_score"`
+	FirstSeen      string `json:"first_seen"`
+}
+
+type backlinkIntersectionHit struct {
+	Target             string `json:"target"`
+	Rank               int    `json:"rank"`
+	Backlinks          int    `json:"backlinks"`
+	FirstSeen          string `json:"first_seen"`
+	BacklinksSpamScore int    `json:"backlinks_spam_score"`
+	ReferringPages     int    `json:"referring_pages"`
 }
 
 type ContentGapKeyword struct {

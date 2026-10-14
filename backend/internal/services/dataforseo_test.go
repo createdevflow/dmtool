@@ -480,6 +480,85 @@ func TestContentGapSectionErrorDoesNotInvent(t *testing.T) {
 	}
 }
 
+func TestBacklinkGapUnconfigured(t *testing.T) {
+	svc := NewDataForSEOService("", "")
+	_, err := svc.BacklinkGap(context.Background(), "example.com", "rival.com")
+	if err != ErrDataForSEONotConfigured {
+		t.Fatalf("err=%v want ErrDataForSEONotConfigured", err)
+	}
+}
+
+func TestBacklinkGapSameDomainRejected(t *testing.T) {
+	svc := &dataForSEO{login: "u", password: "p"}
+	_, err := svc.BacklinkGap(context.Background(), "https://www.example.com", "example.com")
+	if err == nil || !strings.Contains(err.Error(), "different domain") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestBacklinkGapParsesMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "backlinks/domain_intersection") {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		payload := string(body)
+		if !strings.Contains(payload, `"1":"rival.com"`) && !strings.Contains(payload, `"1": "rival.com"`) {
+			http.Error(w, "expected competitor as target 1, got "+payload, http.StatusBadRequest)
+			return
+		}
+		if !strings.Contains(payload, `"exclude_targets"`) || !strings.Contains(payload, `"example.com"`) {
+			http.Error(w, "expected exclude_targets our host, got "+payload, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"total_count":3,"items_count":3,"items":[
+			{"domain_intersection":{"1":{"target":"news.site","rank":120,"backlinks":44,"first_seen":"2022-06-17 19:02:31 +00:00","backlinks_spam_score":5,"referring_pages":12}}},
+			{"domain_intersection":{"1":{"target":"www.example.com","rank":9,"backlinks":2,"first_seen":"2021-01-01 00:00:00 +00:00","backlinks_spam_score":0,"referring_pages":1}}},
+			{"domain_intersection":{"1":{"target":"rival.com","rank":1,"backlinks":1,"first_seen":"2021-01-01 00:00:00 +00:00","backlinks_spam_score":0,"referring_pages":1}}}
+		]}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := &dataForSEO{login: "user", password: "pass", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.BacklinkGap(context.Background(), "https://www.example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Target != "example.com" || got.Competitor != "rival.com" {
+		t.Fatalf("hosts=%s/%s", got.Target, got.Competitor)
+	}
+	if !got.IntersectionOK || got.IntersectionError != "" {
+		t.Fatalf("ok=%v err=%s", got.IntersectionOK, got.IntersectionError)
+	}
+	if got.TotalCount != 3 {
+		t.Fatalf("total_count=%d", got.TotalCount)
+	}
+	if len(got.Referring) != 1 || got.Referring[0].Domain != "news.site" || got.Referring[0].Rank != 120 || got.Referring[0].Backlinks != 44 || got.Referring[0].SpamScore != 5 || got.Referring[0].ReferringPages != 12 {
+		t.Fatalf("referring=%+v (host and rival must be skipped)", got.Referring)
+	}
+}
+
+func TestBacklinkGapSectionErrorDoesNotInvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.BacklinkGap(context.Background(), "example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IntersectionOK || len(got.Referring) != 0 {
+		t.Fatalf("must not invent referring domains on error, got %+v ok=%v", got.Referring, got.IntersectionOK)
+	}
+	if got.IntersectionError == "" {
+		t.Fatal("expected intersection_error")
+	}
+}
+
 func TestCitationGapUnconfigured(t *testing.T) {
 	svc := NewDataForSEOService("", "")
 	_, err := svc.CitationGap(context.Background(), "example.com", "rival.com")

@@ -19,6 +19,7 @@ describe("navGroups honesty", () => {
     expect(hrefs).toContain("/seo/domain-compare");
     expect(hrefs).toContain("/seo/content-gap");
     expect(hrefs).toContain("/seo/citation-gap");
+    expect(hrefs).toContain("/seo/backlink-gap");
     expect(hrefs).not.toContain("/ai/visual");
     expect(hrefs).not.toContain("/social/competitors");
   });

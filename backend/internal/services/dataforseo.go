@@ -36,6 +36,7 @@ type DataForSEOService interface {
 	KeywordOverview(ctx context.Context, keywords []string) (map[string]KeywordLabsMetrics, error)
 	KeywordGap(ctx context.Context, target, competitor string) (KeywordGapResult, error)
 	DomainCompare(ctx context.Context, target, competitor string) (DomainCompareResult, error)
+	ContentGap(ctx context.Context, target, competitor string) (ContentGapResult, error)
 }
 
 type dataForSEO struct {
@@ -343,6 +344,134 @@ func (s *dataForSEO) compareSide(ctx context.Context, host string) DomainCompare
 		side.Backlinks = tmp.Backlinks
 	}
 	return side
+}
+
+// ContentGap pulls competitor ranking pages (relevant_pages) and keywords
+// their pages rank for that ours do not (page_intersection + exclude).
+// Sections fail independently. Results are not written to dashboard metrics.
+func (s *dataForSEO) ContentGap(ctx context.Context, target, competitor string) (ContentGapResult, error) {
+	out := ContentGapResult{
+		Source:       "dataforseo",
+		LocationCode: DataForSEOLocation,
+		LocationName: DataForSEOLocationName,
+		LanguageCode: DataForSEOLanguage,
+		FetchedAt:    time.Now().UTC(),
+		Missing:      []ContentGapKeyword{},
+		Pages:        []CompetitorPage{},
+	}
+	if !s.Configured() {
+		return out, ErrDataForSEONotConfigured
+	}
+	host := NormalizeDomain(target)
+	rival := NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return out, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return out, fmt.Errorf("competitor must be a different domain")
+	}
+	out.Target = host
+	out.Competitor = rival
+
+	if err := s.fillContentGapMissing(ctx, host, rival, &out); err != nil {
+		out.MissingError = err.Error()
+	} else {
+		out.MissingOK = true
+	}
+	if err := s.fillContentGapPages(ctx, rival, &out); err != nil {
+		out.PagesError = err.Error()
+	} else {
+		out.PagesOK = true
+	}
+	return out, nil
+}
+
+func domainWildcardURL(host string) string {
+	return "https://" + host + "/*"
+}
+
+func (s *dataForSEO) fillContentGapMissing(ctx context.Context, host, rival string, out *ContentGapResult) error {
+	raw, err := s.postLive(ctx, "/v3/dataforseo_labs/google/page_intersection/live", map[string]any{
+		"pages":         map[string]string{"1": domainWildcardURL(rival)},
+		"exclude_pages": []string{domainWildcardURL(host)},
+		"location_code": DataForSEOLocation,
+		"language_code": DataForSEOLanguage,
+		"item_types":    []string{"organic"},
+		"limit":         rankedKeywordLimit,
+		"order_by":      []string{"keyword_data.keyword_info.search_volume,desc"},
+	})
+	if err != nil {
+		return err
+	}
+	var wrap []struct {
+		Items []pageIntersectionRow `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return err
+	}
+	out.Missing = []ContentGapKeyword{}
+	if len(wrap) == 0 {
+		return nil
+	}
+	for _, item := range wrap[0].Items {
+		kw := strings.TrimSpace(item.KeywordData.Keyword)
+		if kw == "" {
+			continue
+		}
+		kd := item.KeywordData.KeywordProperties.KeywordDifficulty
+		if kd == 0 {
+			kd = item.KeywordData.KeywordInfo.KeywordDifficulty
+		}
+		hit := item.IntersectionResult["1"]
+		out.Missing = append(out.Missing, ContentGapKeyword{
+			Keyword:            kw,
+			Volume:             item.KeywordData.KeywordInfo.SearchVolume,
+			CPC:                item.KeywordData.KeywordInfo.CPC,
+			KD:                 kd,
+			CompetitorURL:      strings.TrimSpace(hit.URL),
+			CompetitorPosition: hit.RankGroup,
+			Intent:             GuessSearchIntent(kw),
+		})
+	}
+	return nil
+}
+
+func (s *dataForSEO) fillContentGapPages(ctx context.Context, rival string, out *ContentGapResult) error {
+	raw, err := s.postLive(ctx, "/v3/dataforseo_labs/google/relevant_pages/live", map[string]any{
+		"target":        rival,
+		"location_code": DataForSEOLocation,
+		"language_code": DataForSEOLanguage,
+		"limit":         rankedKeywordLimit,
+		"order_by":      []string{"metrics.organic.etv,desc"},
+	})
+	if err != nil {
+		return err
+	}
+	var wrap []struct {
+		Items []relevantPageRow `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return err
+	}
+	out.Pages = []CompetitorPage{}
+	if len(wrap) == 0 {
+		return nil
+	}
+	for _, item := range wrap[0].Items {
+		url := strings.TrimSpace(item.PageAddress)
+		if url == "" {
+			continue
+		}
+		out.Pages = append(out.Pages, CompetitorPage{
+			URL:      url,
+			ETV:      item.Metrics.Organic.ETV,
+			Keywords: item.Metrics.Organic.Count,
+			Pos1:     item.Metrics.Organic.Pos1,
+			Pos2To3:  item.Metrics.Organic.Pos2To3,
+			Pos4To10: item.Metrics.Organic.Pos4To10,
+		})
+	}
+	return nil
 }
 
 func parseGapItems(raw json.RawMessage) ([]parsedGapRow, error) {
@@ -908,6 +1037,78 @@ type DomainCompareSide struct {
 
 func (s DomainCompareSide) HasAnyData() bool {
 	return s.OrganicOK || s.BacklinksOK
+}
+
+type ContentGapResult struct {
+	Target       string              `json:"target"`
+	Competitor   string              `json:"competitor"`
+	Source       string              `json:"source"`
+	LocationCode int                 `json:"location_code"`
+	LocationName string              `json:"location_name"`
+	LanguageCode string              `json:"language_code"`
+	Missing      []ContentGapKeyword `json:"missing"`
+	MissingOK    bool                `json:"missing_ok"`
+	MissingError string              `json:"missing_error,omitempty"`
+	Pages        []CompetitorPage    `json:"pages"`
+	PagesOK      bool                `json:"pages_ok"`
+	PagesError   string              `json:"pages_error,omitempty"`
+	FetchedAt    time.Time           `json:"fetched_at"`
+	Cached       bool                `json:"cached"`
+}
+
+func (r ContentGapResult) HasAnyData() bool {
+	return r.MissingOK || r.PagesOK
+}
+
+type ContentGapKeyword struct {
+	Keyword            string  `json:"keyword"`
+	Volume             int     `json:"volume"`
+	CPC                float64 `json:"cpc"`
+	KD                 int     `json:"kd"`
+	CompetitorURL      string  `json:"competitor_url"`
+	CompetitorPosition int     `json:"competitor_position"`
+	Intent             string  `json:"intent"`
+}
+
+type CompetitorPage struct {
+	URL      string  `json:"url"`
+	ETV      float64 `json:"etv"`
+	Keywords int     `json:"keywords"`
+	Pos1     int     `json:"pos_1"`
+	Pos2To3  int     `json:"pos_2_3"`
+	Pos4To10 int     `json:"pos_4_10"`
+}
+
+type pageIntersectionRow struct {
+	KeywordData struct {
+		Keyword     string `json:"keyword"`
+		KeywordInfo struct {
+			SearchVolume      int     `json:"search_volume"`
+			CPC               float64 `json:"cpc"`
+			KeywordDifficulty int     `json:"keyword_difficulty"`
+		} `json:"keyword_info"`
+		KeywordProperties struct {
+			KeywordDifficulty int `json:"keyword_difficulty"`
+		} `json:"keyword_properties"`
+	} `json:"keyword_data"`
+	IntersectionResult map[string]struct {
+		Type      string `json:"type"`
+		RankGroup int    `json:"rank_group"`
+		URL       string `json:"url"`
+	} `json:"intersection_result"`
+}
+
+type relevantPageRow struct {
+	PageAddress string `json:"page_address"`
+	Metrics     struct {
+		Organic struct {
+			Pos1     int     `json:"pos_1"`
+			Pos2To3  int     `json:"pos_2_3"`
+			Pos4To10 int     `json:"pos_4_10"`
+			ETV      float64 `json:"etv"`
+			Count    int     `json:"count"`
+		} `json:"organic"`
+	} `json:"metrics"`
 }
 
 type GapKeyword struct {

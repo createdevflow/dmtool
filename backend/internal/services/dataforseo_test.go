@@ -401,6 +401,85 @@ func TestDomainCompareSectionErrorDoesNotInvent(t *testing.T) {
 	}
 }
 
+func TestContentGapUnconfigured(t *testing.T) {
+	svc := NewDataForSEOService("", "")
+	_, err := svc.ContentGap(context.Background(), "example.com", "rival.com")
+	if err != ErrDataForSEONotConfigured {
+		t.Fatalf("err=%v want ErrDataForSEONotConfigured", err)
+	}
+}
+
+func TestContentGapSameDomainRejected(t *testing.T) {
+	svc := &dataForSEO{login: "u", password: "p"}
+	_, err := svc.ContentGap(context.Background(), "https://www.example.com", "example.com")
+	if err == nil || !strings.Contains(err.Error(), "different domain") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestContentGapParsesMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "page_intersection"):
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"keyword_data":{"keyword":"buy widgets","keyword_info":{"search_volume":2200,"cpc":1.5},"keyword_properties":{"keyword_difficulty":44}},"intersection_result":{"1":{"type":"organic","rank_group":3,"url":"https://rival.com/widgets"}}}]}]}]}`))
+		case strings.Contains(r.URL.Path, "relevant_pages"):
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"page_address":"https://rival.com/widgets","metrics":{"organic":{"pos_1":2,"pos_2_3":4,"pos_4_10":6,"etv":321.5,"count":18}}}]}]}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := &dataForSEO{login: "user", password: "pass", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.ContentGap(context.Background(), "https://www.example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Target != "example.com" || got.Competitor != "rival.com" {
+		t.Fatalf("hosts=%s/%s", got.Target, got.Competitor)
+	}
+	if !got.MissingOK || len(got.Missing) != 1 {
+		t.Fatalf("missing=%+v ok=%v err=%s", got.Missing, got.MissingOK, got.MissingError)
+	}
+	miss := got.Missing[0]
+	if miss.Keyword != "buy widgets" || miss.Volume != 2200 || miss.KD != 44 || miss.CompetitorPosition != 3 || miss.CompetitorURL != "https://rival.com/widgets" {
+		t.Fatalf("missing row=%+v", miss)
+	}
+	if miss.Intent != "transactional" {
+		t.Fatalf("intent=%s", miss.Intent)
+	}
+	if !got.PagesOK || len(got.Pages) != 1 || got.Pages[0].Keywords != 18 || got.Pages[0].ETV != 321.5 {
+		t.Fatalf("pages=%+v ok=%v err=%s", got.Pages, got.PagesOK, got.PagesError)
+	}
+}
+
+func TestContentGapSectionErrorDoesNotInvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "relevant_pages") {
+			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"keyword_data":{"keyword":"widgets","keyword_info":{"search_volume":10}},"intersection_result":{"1":{"rank_group":2,"url":"https://rival.com/w"}}}]}]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	svc := &dataForSEO{login: "u", password: "p", client: srv.Client(), baseURL: srv.URL}
+	got, err := svc.ContentGap(context.Background(), "example.com", "rival.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.MissingOK || len(got.Missing) != 1 || got.Missing[0].Keyword != "widgets" {
+		t.Fatalf("missing=%+v", got.Missing)
+	}
+	if got.PagesOK || len(got.Pages) != 0 {
+		t.Fatalf("pages should be empty on error, got %+v ok=%v", got.Pages, got.PagesOK)
+	}
+	if got.PagesError == "" {
+		t.Fatal("expected pages_error")
+	}
+}
+
 func TestPostLiveTaskError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":40100,"status_message":"Auth failed."}]}`))

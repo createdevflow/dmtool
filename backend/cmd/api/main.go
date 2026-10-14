@@ -422,6 +422,7 @@ func registerSEORoutes(
 	g.GET("/seo/ai-visibility", h.AIVisibility)
 	g.GET("/seo/keyword-gap", h.KeywordGap)
 	g.GET("/seo/domain-compare", h.DomainCompare)
+	g.GET("/seo/content-gap", h.ContentGap)
 }
 
 func registerSocialRoutes(

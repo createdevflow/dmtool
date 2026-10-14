@@ -1473,3 +1473,175 @@ func (h *SEOHandler) loadDomainCompare(ctx context.Context, target, competitor s
 	}
 	return result, false, nil
 }
+
+// ContentGap returns competitor ranking pages and keywords their pages
+// rank for that ours do not. Cache-only unless fetch=1 or refresh=1.
+// Does not write vendor counts into dashboard metrics.
+func (h *SEOHandler) ContentGap(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	domain := c.Query("domain")
+	if domain == "" {
+		domain = project.URL
+	}
+	competitor := strings.TrimSpace(c.Query("competitor"))
+	refresh := c.Query("refresh") == "1" || strings.EqualFold(c.Query("refresh"), "true")
+	wantFetch := refresh || c.Query("fetch") == "1" || strings.EqualFold(c.Query("fetch"), "true")
+	host := services.NormalizeDomain(domain)
+	rival := services.NormalizeDomain(competitor)
+
+	if !h.dataForSEOReady() {
+		utils.Success(c, contentGapEmptyJSON(host, rival, false, "DataForSEO is not connected. Set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD."), nil)
+		return
+	}
+
+	if rival == "" {
+		utils.Success(c, contentGapEmptyJSON(host, "", true, "Enter a competitor domain to look up ranking pages. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+	if host == "" {
+		utils.Success(c, contentGapEmptyJSON("", rival, true, "invalid domain"), nil)
+		return
+	}
+	if host == rival {
+		utils.Success(c, contentGapEmptyJSON(host, rival, true, "competitor must be a different domain"), nil)
+		return
+	}
+
+	if !wantFetch {
+		if cached, ok := h.cachedContentGap(host, rival); ok {
+			utils.Success(c, contentGapJSON(cached, true), nil)
+			return
+		}
+		utils.Success(c, contentGapEmptyJSON(host, rival, true, "Click Look up to query DataForSEO Labs page intersection and relevant pages. This uses vendor credits; results cache 24 hours."), nil)
+		return
+	}
+
+	result, cached, err := h.loadContentGap(c.Request.Context(), host, rival, refresh)
+	if err != nil {
+		if errors.Is(err, services.ErrDataForSEONotConfigured) {
+			utils.Success(c, contentGapEmptyJSON(host, rival, false, "DataForSEO is not connected."), nil)
+			return
+		}
+		utils.Success(c, contentGapEmptyJSON(host, rival, true, err.Error()), nil)
+		return
+	}
+	result.Cached = cached
+	utils.Success(c, contentGapJSON(result, cached), nil)
+}
+
+func contentGapEmptyJSON(target, competitor string, configured bool, message string) gin.H {
+	return gin.H{
+		"available":  false,
+		"configured": configured,
+		"source":     "dataforseo",
+		"target":     target,
+		"competitor": competitor,
+		"missing":    []services.ContentGapKeyword{},
+		"pages":      []services.CompetitorPage{},
+		"missing_ok": false,
+		"pages_ok":   false,
+		"message":    message,
+	}
+}
+
+func contentGapJSON(result services.ContentGapResult, cached bool) gin.H {
+	missing := result.Missing
+	if missing == nil {
+		missing = []services.ContentGapKeyword{}
+	}
+	pages := result.Pages
+	if pages == nil {
+		pages = []services.CompetitorPage{}
+	}
+	return gin.H{
+		"available":     result.HasAnyData(),
+		"configured":    true,
+		"source":        result.Source,
+		"target":        result.Target,
+		"competitor":    result.Competitor,
+		"location_code": result.LocationCode,
+		"location_name": result.LocationName,
+		"language_code": result.LanguageCode,
+		"missing":       missing,
+		"missing_ok":    result.MissingOK,
+		"missing_error": result.MissingError,
+		"pages":         pages,
+		"pages_ok":      result.PagesOK,
+		"pages_error":   result.PagesError,
+		"cached":        cached,
+		"fetched_at":    result.FetchedAt.Format(time.RFC3339),
+		"message":       "DataForSEO Labs page intersection and relevant pages (United States, English). Missing = their pages rank, yours do not. Not Search Console and not a sitewide crawl.",
+	}
+}
+
+func (h *SEOHandler) cachedContentGap(target, competitor string) (services.ContentGapResult, bool) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" || h.seoRepo == nil {
+		return services.ContentGapResult{}, false
+	}
+	snap, err := h.seoRepo.FindVendorContentGapSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+	if err != nil || snap == nil || snap.Payload == "" {
+		return services.ContentGapResult{}, false
+	}
+	var cached services.ContentGapResult
+	if json.Unmarshal([]byte(snap.Payload), &cached) != nil || !cached.HasAnyData() {
+		return services.ContentGapResult{}, false
+	}
+	cached.Cached = true
+	return cached, true
+}
+
+func (h *SEOHandler) loadContentGap(ctx context.Context, target, competitor string, refresh bool) (services.ContentGapResult, bool, error) {
+	host := services.NormalizeDomain(target)
+	rival := services.NormalizeDomain(competitor)
+	if host == "" || rival == "" {
+		return services.ContentGapResult{}, false, fmt.Errorf("invalid domain")
+	}
+	if host == rival {
+		return services.ContentGapResult{}, false, fmt.Errorf("competitor must be a different domain")
+	}
+	if h.seoRepo != nil && !refresh {
+		snap, err := h.seoRepo.FindVendorContentGapSnapshot(host, rival, services.DataForSEOLocation, services.DataForSEOLanguage)
+		if err == nil && snap != nil && time.Since(snap.FetchedAt) < vendorSnapshotTTL && snap.Payload != "" {
+			var cached services.ContentGapResult
+			if json.Unmarshal([]byte(snap.Payload), &cached) == nil && cached.HasAnyData() {
+				cached.Cached = true
+				return cached, true, nil
+			}
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[seo] content gap snapshot read: %v", err)
+		}
+	}
+
+	result, err := h.dataForSEOSvc.ContentGap(ctx, host, rival)
+	if err != nil {
+		return result, false, err
+	}
+	if h.seoRepo != nil && result.HasAnyData() {
+		raw, _ := json.Marshal(result)
+		_ = h.seoRepo.SaveVendorContentGapSnapshot(&models.VendorContentGapSnapshot{
+			Target:       result.Target,
+			Competitor:   result.Competitor,
+			LocationCode: result.LocationCode,
+			LanguageCode: result.LanguageCode,
+			Source:       result.Source,
+			Payload:      string(raw),
+			FetchedAt:    result.FetchedAt,
+		})
+	}
+	return result, false, nil
+}

@@ -443,6 +443,15 @@ func TestSnapshot_NoGSCTrafficShowsEmDash(t *testing.T) {
 	if got := valueFor(payload.CombinedStats, "Organic Traffic"); got != "—" {
 		t.Fatalf("combined Organic Traffic=%q want —", got)
 	}
+	if got := valueFor(payload.WebsiteStats, "SEO Health"); got != "—" {
+		t.Fatalf("SEO Health=%q want — when not audited", got)
+	}
+	if got := changeFor(payload.WebsiteStats, "SEO Health"); got != "Not audited" {
+		t.Fatalf("SEO Health change=%q want Not audited", got)
+	}
+	if got := valueFor(payload.CombinedStats, "SEO Health"); got != "—" {
+		t.Fatalf("combined SEO Health=%q want —", got)
+	}
 }
 
 func TestSnapshot_VendorBriefCacheOnlyDoesNotChangeTraffic(t *testing.T) {

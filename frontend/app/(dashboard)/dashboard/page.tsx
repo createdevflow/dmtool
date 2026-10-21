@@ -40,6 +40,7 @@ import { AIInsightCard } from "@/components/dashboard/ai-insight-card";
 import { ActionCenterTask } from "@/components/dashboard/action-center-task";
 import { StoredWorkList } from "@/components/dashboard/stored-work-list";
 import { formatTaskRow, parseTasksPayload } from "@/lib/action-work";
+import { formatHealthOver100 } from "@/lib/health-score";
 import { SectionTabs, type SectionTab } from "@/components/dashboard/section-tabs";
 import { useDashboardMode } from "@/components/dashboard/dashboard-mode-context";
 import { toast } from "@/components/ui/toaster";
@@ -180,10 +181,9 @@ export default function DashboardPage() {
       />
 
       <div>
-        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Growth Score</p>
+        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">SEO Health</p>
         <p className="text-3xl font-semibold text-slate-900 tracking-tight tabular-nums">
-          {project?.health_score || 0}
-          <span className="text-sm opacity-40">/100</span>
+          {formatHealthOver100(project?.health_score)}
         </p>
       </div>
 

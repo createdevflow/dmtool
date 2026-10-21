@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { dashboardApi } from "@/lib/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "@/components/ui/toaster";
+import { formatHealthOver100 } from "@/lib/health-score";
 import { Suspense } from "react";
 
 function ProjectSettingsContent() {
@@ -348,7 +349,7 @@ function ProjectSettingsContent() {
                       { label: "Project ID", value: `DM-${project?.id}-X90` },
                       { label: "Status", value: project?.status ? project.status.charAt(0).toUpperCase() + project.status.slice(1) : "Active" },
                       { label: "Goal", value: project?.goal ? project.goal.toUpperCase() : "—" },
-                      { label: "Health Score", value: `${project?.health_score || 0}/100` },
+                      { label: "Health Score", value: formatHealthOver100(project?.health_score) },
                       { label: "Created", value: project?.created_at ? new Date(project.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : "—" },
                     ].map((row) => (
                       <div key={row.label} className="flex items-center justify-between px-4 py-3">

@@ -107,13 +107,7 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 	hasGSC := trafficSource != "" || ranked > 0 || len(pages)+len(countries)+len(devices) > 0
 
 	websiteStats := []gin.H{
-		{
-			"label":  "SEO Health",
-			"value":  strconv.Itoa(project.HealthScore) + "%",
-			"change": healthStatus(project.HealthScore),
-			"trend":  healthTrend(project.HealthScore),
-			"icon":   "Target",
-		},
+		seoHealthStat(project.HealthScore),
 		gscCountStat("Organic Traffic", currClicks, clickChange, hasGSC, "Globe"),
 		gscCountStat("Search Impressions", currImpressions, impressionChange, hasGSC, "TrendingUp"),
 		gscRateStat("Click-Through Rate", ctr, ctrDelta, hasGSC, "MousePointer2"),
@@ -202,13 +196,7 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 			"trend":  engRateTrend(avgEngRate),
 			"icon":   "Activity",
 		},
-		{
-			"label":  "SEO Health",
-			"value":  strconv.Itoa(project.HealthScore) + "%",
-			"change": healthStatus(project.HealthScore),
-			"trend":  healthTrend(project.HealthScore),
-			"icon":   "Target",
-		},
+		seoHealthStat(project.HealthScore),
 		{
 			"label":  "Open SEO Issues",
 			"value":  strconv.Itoa(openIssueCount),
@@ -496,10 +484,26 @@ func healthStatus(score int) string {
 }
 
 func healthTrend(score int) string {
+	if score <= 0 {
+		return "flat"
+	}
 	if score >= 75 {
 		return "up"
 	}
 	return "down"
+}
+
+func seoHealthStat(score int) gin.H {
+	if score <= 0 {
+		return dashStat("SEO Health", "Not audited", "Target")
+	}
+	return gin.H{
+		"label":  "SEO Health",
+		"value":  strconv.Itoa(score) + "%",
+		"change": healthStatus(score),
+		"trend":  healthTrend(score),
+		"icon":   "Target",
+	}
 }
 
 func engRateLabel(rate float64) string {

@@ -19,6 +19,7 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { dashboardApi } from "@/lib/api-client";
+import { formatHealthPercent } from "@/lib/health-score";
 // Removed sonner toast as it's not installed
 
 export default function ProjectsPage() {
@@ -149,7 +150,7 @@ export default function ProjectsPage() {
                     <div className="grid grid-cols-2 gap-4 text-sm mb-6 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
                         <div>
                           <div className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">Health</div>
-                          <div className="font-bold text-slate-900 text-base">{project.health_score || 0}%</div>
+                          <div className="font-bold text-slate-900 text-base">{formatHealthPercent(project.health_score)}</div>
                         </div>
                         <div>
                           <div className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">Status</div>

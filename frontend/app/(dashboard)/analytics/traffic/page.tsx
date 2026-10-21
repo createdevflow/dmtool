@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { dashboardApi } from "@/lib/api-client";
 import { toast } from "@/components/ui/toaster";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { auditedHealthScore, formatHealthOver100 } from "@/lib/health-score";
 
 function Stat({ label, value, change, trend, icon: Icon, loading }: any) {
   const isUp = trend === "up";
@@ -223,9 +224,9 @@ export default function TrafficPage() {
         />
         <Stat
           label="SEO Health Score"
-          value={`${project?.health_score ?? 0}/100`}
-          change={project?.health ? project.health.charAt(0).toUpperCase() + project.health.slice(1) : "—"}
-          trend={project?.health_score >= 75 ? "up" : "down"}
+          value={formatHealthOver100(project?.health_score)}
+          change={auditedHealthScore(project?.health_score) === null ? "Not audited" : (project?.health ? project.health.charAt(0).toUpperCase() + project.health.slice(1) : "—")}
+          trend={auditedHealthScore(project?.health_score) === null ? "flat" : (project?.health_score >= 75 ? "up" : "down")}
           icon={TrendingUp}
           loading={loading}
         />

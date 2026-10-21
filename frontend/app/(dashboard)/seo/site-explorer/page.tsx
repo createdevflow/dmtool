@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DomainExplorerPanel } from "@/components/seo/domain-explorer";
+import { auditedHealthScore } from "@/lib/health-score";
 
 const severityConfig: Record<string, { color: string; bg: string; border: string; icon: any }> = {
   high:   { color: "text-rose-600",  bg: "bg-rose-50",   border: "border-rose-100", icon: AlertCircle },
@@ -342,10 +343,10 @@ export default function SiteExplorerPage() {
     );
   }
 
-  const score = auditResult?.score ?? project?.health_score ?? 0;
+  const score = auditedHealthScore(auditResult?.score ?? project?.health_score);
   const checks: any[] = auditResult?.checks ?? [];
-  const healthLabel = score >= 75 ? "Healthy" : score >= 50 ? "Needs Work" : score > 0 ? "Critical" : "Not Audited";
-  const healthColor = score >= 75 ? "emerald" : score >= 50 ? "amber" : score > 0 ? "rose" : "slate";
+  const healthLabel = score === null ? "Not Audited" : score >= 75 ? "Healthy" : score >= 50 ? "Needs Work" : "Critical";
+  const healthColor = score === null ? "slate" : score >= 75 ? "emerald" : score >= 50 ? "amber" : "rose";
   const circumference = 2 * Math.PI * 54;
 
   const passCount = checks.filter((c) => c.status === "pass").length;
@@ -395,13 +396,13 @@ export default function SiteExplorerPage() {
                 cx="56" cy="56" r="54"
                 stroke="currentColor" strokeWidth="7" fill="transparent"
                 strokeDasharray={circumference}
-                strokeDashoffset={circumference * (1 - score / 100)}
+                strokeDashoffset={circumference * (1 - (score ?? 0) / 100)}
                 className={`text-${healthColor}-500 transition-all duration-1000`}
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-4xl font-bold text-slate-900 tracking-tighter">{score}</span>
-              <span className="text-[10px] font-bold text-slate-400">/ 100</span>
+              <span className="text-4xl font-bold text-slate-900 tracking-tighter">{score === null ? "—" : score}</span>
+              <span className="text-[10px] font-bold text-slate-400">{score === null ? "unaudited" : "/ 100"}</span>
             </div>
           </div>
           <Badge variant="outline" className={`bg-${healthColor}-50 text-${healthColor}-600 border-0 font-bold px-3 py-1`}>

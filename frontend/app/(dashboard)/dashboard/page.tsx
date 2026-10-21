@@ -35,6 +35,7 @@ import { useRouter } from "next/navigation";
 import { dashboardApi } from "@/lib/api-client";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { GrowthSnapshot } from "@/components/dashboard/growth-snapshot";
+import { DailyLoop } from "@/components/dashboard/daily-loop";
 import { AIInsightCard } from "@/components/dashboard/ai-insight-card";
 import { ActionCenterTask } from "@/components/dashboard/action-center-task";
 import { SectionTabs, type SectionTab } from "@/components/dashboard/section-tabs";
@@ -195,6 +196,8 @@ export default function DashboardPage() {
         project={project} 
         snapshotData={snapshot}
       />
+
+      <DailyLoop snapshot={snapshot} />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
         

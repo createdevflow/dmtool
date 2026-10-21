@@ -114,27 +114,9 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 			"trend":  healthTrend(project.HealthScore),
 			"icon":   "Target",
 		},
-		{
-			"label":  "Organic Traffic",
-			"value":  utils.FormatNumber(currClicks),
-			"change": fmtChange(clickChange),
-			"trend":  trendDir(clickChange),
-			"icon":   "Globe",
-		},
-		{
-			"label":  "Search Impressions",
-			"value":  utils.FormatNumber(currImpressions),
-			"change": fmtChange(impressionChange),
-			"trend":  trendDir(impressionChange),
-			"icon":   "TrendingUp",
-		},
-		{
-			"label":  "Click-Through Rate",
-			"value":  fmt.Sprintf("%.1f%%", ctr),
-			"change": fmtCTRDelta(ctrDelta),
-			"trend":  trendDir(ctrDelta),
-			"icon":   "MousePointer2",
-		},
+		gscCountStat("Organic Traffic", currClicks, clickChange, hasGSC, "Globe"),
+		gscCountStat("Search Impressions", currImpressions, impressionChange, hasGSC, "TrendingUp"),
+		gscRateStat("Click-Through Rate", ctr, ctrDelta, hasGSC, "MousePointer2"),
 		rankedKeywordStat("Ranked Keywords", ranked, hasGSC),
 		rankedKeywordStat("Top 3 Keywords", top3, hasGSC),
 		rankedKeywordStat("Page 1 Keywords", page1, hasGSC),
@@ -210,20 +192,8 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 	}
 
 	combinedStats := []gin.H{
-		{
-			"label":  "Organic Traffic",
-			"value":  utils.FormatNumber(currClicks),
-			"change": fmtChange(clickChange),
-			"trend":  trendDir(clickChange),
-			"icon":   "Globe",
-		},
-		{
-			"label":  "Search Impressions",
-			"value":  utils.FormatNumber(currImpressions),
-			"change": fmtChange(impressionChange),
-			"trend":  trendDir(impressionChange),
-			"icon":   "TrendingUp",
-		},
+		gscCountStat("Organic Traffic", currClicks, clickChange, hasGSC, "Globe"),
+		gscCountStat("Search Impressions", currImpressions, impressionChange, hasGSC, "TrendingUp"),
 		socialCountStat("Total Followers", latestFollowers, liveSocial, "Latest sync", "Users"),
 		{
 			"label":  "Engagement Rate",
@@ -260,6 +230,7 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		markupOverviewStat(issues, project.HealthScore, project.UpdatedAt),
 	}
 
+	brief := h.vendorBrief(project.URL)
 	utils.Success(c, gin.H{
 		"project":        project,
 		"websiteStats":   websiteStats,
@@ -268,6 +239,8 @@ func (h *DashboardHandler) Snapshot(c *gin.Context) {
 		"health_score":   project.HealthScore,
 		"is_simulated":   false,
 		"traffic_source": trafficSource,
+		"vendor_brief":   brief,
+		"today_loop":     buildTodayLoop(hasGSC, project.HealthScore, openIssueCount, domainLookedUp(brief)),
 	}, nil)
 }
 

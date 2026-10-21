@@ -197,6 +197,7 @@ type storedActionState struct {
 	hasGSC         bool
 	issues         []models.SEOIssue
 	domainLookedUp bool
+	brief          gin.H
 }
 
 func (h *DashboardHandler) storedActionState(project *models.Project) storedActionState {
@@ -227,7 +228,8 @@ func (h *DashboardHandler) storedActionState(project *models.Project) storedActi
 	traffic := len(metricsCurrent) > 0 || len(metricsPrevious) > 0
 	st.hasGSC = traffic || ranked > 0 || len(pages)+len(countries)+len(devices) > 0
 	st.issues = issues
-	st.domainLookedUp = domainLookedUp(h.vendorBrief(project.URL))
+	st.brief = h.vendorBrief(project.URL)
+	st.domainLookedUp = domainLookedUp(st.brief)
 	return st
 }
 
@@ -270,4 +272,77 @@ func buildActionWork(hasGSC bool, healthScore int, domainLookedUp bool, issues [
 		})
 	}
 	return work
+}
+
+// buildStoredAlerts is the Alerts list from stored state. Conditions
+// that are not true are omitted. Missing vendor cache is not an alert.
+func buildStoredAlerts(hasGSC bool, issues []models.SEOIssue, brief gin.H) []gin.H {
+	out := make([]gin.H, 0, 5)
+	if !hasGSC {
+		out = append(out, gin.H{
+			"id":       "gsc_missing",
+			"kind":     "gsc_missing",
+			"title":    "Connect Google Search Console",
+			"body":     "Overview traffic stays empty until GSC is connected.",
+			"href":     "/integrations",
+			"severity": "high",
+			"is_read":  false,
+		})
+	}
+	high := 0
+	for _, iss := range issues {
+		if strings.EqualFold(strings.TrimSpace(iss.Severity), models.SeverityHigh) {
+			high++
+		}
+	}
+	if high > 0 {
+		noun := "issue"
+		if high != 1 {
+			noun = "issues"
+		}
+		out = append(out, gin.H{
+			"id":       "seo_high",
+			"kind":     "seo_high",
+			"title":    fmt.Sprintf("%d high-severity SEO %s", high, noun),
+			"body":     "From the last homepage audit. Not a full-site crawl.",
+			"href":     "/seo/site-explorer",
+			"severity": "high",
+			"is_read":  false,
+			"count":    high,
+		})
+	}
+	out = append(out, staleVendorAlerts(brief)...)
+	return out
+}
+
+func staleVendorAlerts(brief gin.H) []gin.H {
+	if brief == nil {
+		return []gin.H{}
+	}
+	specs := []struct {
+		key, id, title, href string
+	}{
+		{"domain_explorer", "vendor_stale_domain", "Domain explorer cache is stale", "/seo/site-explorer"},
+		{"ai_visibility", "vendor_stale_ai", "AI visibility cache is stale", "/seo/ai-visibility"},
+		{"backlink_explorer", "vendor_stale_backlinks", "Backlink explorer cache is stale", "/seo/backlinks"},
+	}
+	out := make([]gin.H, 0, 3)
+	for _, spec := range specs {
+		lookup, _ := brief[spec.key].(gin.H)
+		available, _ := lookup["available"].(bool)
+		stale, _ := lookup["stale"].(bool)
+		if !available || !stale {
+			continue
+		}
+		out = append(out, gin.H{
+			"id":       spec.id,
+			"kind":     spec.id,
+			"title":    spec.title,
+			"body":     "Cached DataForSEO lookup is older than 24 hours. Overview does not auto-refresh.",
+			"href":     spec.href,
+			"severity": "medium",
+			"is_read":  false,
+		})
+	}
+	return out
 }

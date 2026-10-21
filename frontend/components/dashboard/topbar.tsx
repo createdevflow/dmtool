@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LogOut, User, Settings as SettingsIcon } from "lucide-react";
 import { dashboardApi, authApi, billingApi, stopSessionKeepAlive } from "@/lib/api-client";
+import { parseAlertsPayload, unreadAlertCount } from "@/lib/alerts";
 import { readCookie, COOKIE_USER, clearAuth, clearImpersonation } from "@/lib/auth-cookie";
 import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -48,11 +49,11 @@ export function Topbar() {
         const res = await dashboardApi.getProjects();
         const allProjects = res.data?.data || [];
         if (allProjects.length > 0) {
-          const latest = allProjects[allProjects.length - 1];
-          const aRes = await dashboardApi.getAlerts(latest.id);
-          const alerts = aRes.data?.data ?? [];
-          const unread = Array.isArray(alerts) ? alerts.filter((a: any) => !a.is_read).length : 0;
-          setAlertCount(unread);
+          let savedProjectId = 0;
+          try { savedProjectId = parseInt(localStorage.getItem("dmtool_active_project_id") || "0"); } catch {}
+          const project = allProjects.find((x: any) => x.id === savedProjectId) || allProjects[allProjects.length - 1];
+          const aRes = await dashboardApi.getAlerts(project.id);
+          setAlertCount(unreadAlertCount(parseAlertsPayload(aRes.data)));
         }
       } catch (err) {
         console.error(err);

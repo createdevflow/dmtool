@@ -426,11 +426,27 @@ func (h *DashboardHandler) Competitors(c *gin.Context) {
 	})
 }
 
-// Alerts returns real DB alerts (currently empty until alert system is populated by workers).
+// Alerts returns stored-state signals for the project: GSC missing,
+// high-severity open issues, and stale vendor cache. Empty when none
+// of those conditions are true. Never calls DataForSEO.
 func (h *DashboardHandler) Alerts(c *gin.Context) {
-	// Alert system is populated by background workers after real syncs.
-	// Return an empty slice until the first sync creates real alerts.
-	utils.Success(c, []gin.H{}, nil)
+	userID := c.MustGet("user_id").(uint)
+	projectIDStr := c.Query("project_id")
+	if projectIDStr == "" {
+		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
+		return
+	}
+	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
+
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	st := h.storedActionState(project)
+	utils.Success(c, buildStoredAlerts(st.hasGSC, st.issues, st.brief), nil)
 }
 
 func gscOnly(in []models.Metric) []models.Metric {

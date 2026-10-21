@@ -31,6 +31,7 @@ import {
   CreditCard,
   Blocks,
   Shield,
+  Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardMode, type Mode } from "./dashboard-mode-context";
@@ -83,6 +84,7 @@ export const navGroups: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
+      { name: "Alerts", href: "/alerts", icon: Bell },
     ],
   },
   {

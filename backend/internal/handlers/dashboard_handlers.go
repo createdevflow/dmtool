@@ -287,6 +287,7 @@ func (h *DashboardHandler) Insights(c *gin.Context) {
 }
 
 func (h *DashboardHandler) Tasks(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
 	projectIDStr := c.Query("project_id")
 	if projectIDStr == "" {
 		utils.BadRequest(c, "project_id is required", "MISSING_PROJECT_ID")
@@ -294,14 +295,28 @@ func (h *DashboardHandler) Tasks(c *gin.Context) {
 	}
 
 	projectID, _ := strconv.ParseUint(projectIDStr, 10, 32)
+	pid := uint(projectID)
 
-	tasks, err := h.taskRepo.FindAllByProject(uint(projectID))
+	project, err := h.projectRepo.FindByIDAndUser(pid, userID)
+	if err != nil || project == nil {
+		utils.NotFound(c, "Project not found")
+		return
+	}
+
+	tasks, err := h.taskRepo.FindAllByProject(pid)
 	if err != nil {
 		utils.InternalError(c, "Failed to fetch tasks")
 		return
 	}
+	if tasks == nil {
+		tasks = []models.Task{}
+	}
 
-	utils.Success(c, tasks, nil)
+	st := h.storedActionState(project)
+	utils.Success(c, gin.H{
+		"tasks": tasks,
+		"work":  buildActionWork(st.hasGSC, project.HealthScore, st.domainLookedUp, st.issues),
+	}, nil)
 }
 
 type CreateTaskRequest struct {

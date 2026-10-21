@@ -3,8 +3,11 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
+	"backend/internal/models"
 	"backend/internal/services"
 	"backend/internal/utils"
 
@@ -188,4 +191,83 @@ func domainLookedUp(brief gin.H) bool {
 	}
 	available, _ := raw["available"].(bool)
 	return available
+}
+
+type storedActionState struct {
+	hasGSC         bool
+	issues         []models.SEOIssue
+	domainLookedUp bool
+}
+
+func (h *DashboardHandler) storedActionState(project *models.Project) storedActionState {
+	st := storedActionState{issues: []models.SEOIssue{}}
+	if project == nil || h.seoRepo == nil {
+		return st
+	}
+	pid := project.ID
+	now := time.Now()
+	t0 := now.Format("2006-01-02")
+	t30 := now.AddDate(0, 0, -30).Format("2006-01-02")
+	t60 := now.AddDate(0, 0, -60).Format("2006-01-02")
+
+	metricsCurrent, _ := h.metricRepo.FindMetricsByProjectAndRange(pid, t30, t0)
+	metricsPrevious, _ := h.metricRepo.FindMetricsByProjectAndRange(pid, t60, t30)
+	metricsCurrent = gscOnly(metricsCurrent)
+	metricsPrevious = gscOnly(metricsPrevious)
+
+	issues, _ := h.seoRepo.FindOpenIssues(pid, "")
+	if issues == nil {
+		issues = []models.SEOIssue{}
+	}
+	keywords, _, _ := h.seoRepo.FindKeywords(pid, "")
+	ranked, _, _ := keywordPositionBuckets(keywords)
+	pages, _ := h.seoRepo.FindBreakdowns(pid, models.GSCDimPage)
+	countries, _ := h.seoRepo.FindBreakdowns(pid, models.GSCDimCountry)
+	devices, _ := h.seoRepo.FindBreakdowns(pid, models.GSCDimDevice)
+	traffic := len(metricsCurrent) > 0 || len(metricsPrevious) > 0
+	st.hasGSC = traffic || ranked > 0 || len(pages)+len(countries)+len(devices) > 0
+	st.issues = issues
+	st.domainLookedUp = domainLookedUp(h.vendorBrief(project.URL))
+	return st
+}
+
+// buildActionWork is the Action Center list: Overview loop steps plus
+// each open SEO issue. Items are links. They are not Task rows.
+func buildActionWork(hasGSC bool, healthScore int, domainLookedUp bool, issues []models.SEOIssue) []gin.H {
+	if issues == nil {
+		issues = []models.SEOIssue{}
+	}
+	loop := buildTodayLoop(hasGSC, healthScore, len(issues), domainLookedUp)
+	work := make([]gin.H, 0, len(loop)+len(issues))
+	for _, step := range loop {
+		step["kind"] = "loop"
+		work = append(work, step)
+	}
+	for _, iss := range issues {
+		title := strings.TrimSpace(iss.Detail)
+		if title == "" {
+			title = strings.TrimSpace(iss.Category)
+		}
+		if title == "" {
+			title = "Open SEO issue"
+		}
+		detail := strings.TrimSpace(iss.Severity)
+		if iss.Category != "" {
+			if detail == "" {
+				detail = iss.Category
+			} else {
+				detail = detail + " · " + iss.Category
+			}
+		}
+		work = append(work, gin.H{
+			"id":       "issue-" + strconv.FormatUint(uint64(iss.ID), 10),
+			"kind":     "issue",
+			"title":    title,
+			"href":     "/seo/site-explorer",
+			"done":     false,
+			"detail":   detail,
+			"severity": iss.Severity,
+		})
+	}
+	return work
 }

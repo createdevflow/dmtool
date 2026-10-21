@@ -38,6 +38,8 @@ import { GrowthSnapshot } from "@/components/dashboard/growth-snapshot";
 import { DailyLoop } from "@/components/dashboard/daily-loop";
 import { AIInsightCard } from "@/components/dashboard/ai-insight-card";
 import { ActionCenterTask } from "@/components/dashboard/action-center-task";
+import { StoredWorkList } from "@/components/dashboard/stored-work-list";
+import { formatTaskRow, parseTasksPayload } from "@/lib/action-work";
 import { SectionTabs, type SectionTab } from "@/components/dashboard/section-tabs";
 import { useDashboardMode } from "@/components/dashboard/dashboard-mode-context";
 import { toast } from "@/components/ui/toaster";
@@ -48,6 +50,7 @@ export default function DashboardPage() {
   const [metrics, setMetrics] = useState<any[]>([]);
   const [insights, setInsights] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
+  const [work, setWork] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [project, setProject] = useState<any>(null);
   const [snapshot, setSnapshot] = useState<any>(null);
@@ -84,7 +87,6 @@ export default function DashboardPage() {
         
         const mData = mRes.data?.data;
         const iData = iRes.data?.data;
-        const tData = tRes.data?.data;
 
         
         const formattedMetrics = (Array.isArray(mData) ? mData : []).map((m: any) => ({
@@ -100,12 +102,9 @@ export default function DashboardPage() {
           actionText: i.type === 'critical' ? 'Fix Issue' : i.type === 'opportunity' ? 'Capitalize' : 'Learn More'
         }));
         setInsights(formattedInsights);
-        const formattedTasks = (Array.isArray(tData) ? tData : []).map((t: any) => ({
-          ...t,
-          isDone: t.completed,
-          priority: t.source === 'ai' ? 'High' : 'Medium'
-        }));
-        setTasks(formattedTasks);
+        const parsedTasks = parseTasksPayload(tRes.data);
+        setTasks(parsedTasks.tasks.map(formatTaskRow));
+        setWork(parsedTasks.work);
         setSnapshot(sRes.data?.data || null);
       }
     } catch (err) {
@@ -142,7 +141,7 @@ export default function DashboardPage() {
         title: newTaskTitle.trim()
       });
       const createdTask = res.data.data;
-      setTasks([...tasks, { ...createdTask, isDone: false, priority: 'Medium' }]);
+      setTasks([...tasks, formatTaskRow(createdTask)]);
       setNewTaskTitle("");
     } catch (err) {
       toast("Failed to create task");
@@ -278,14 +277,19 @@ export default function DashboardPage() {
                 </div>
                 <div className="space-y-3">
                   <Progress value={progressPercent} className="h-1.5 bg-slate-100" indicatorClassName="bg-emerald-500" />
-                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Execute tasks to move your growth index</p>
+                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Stored work plus your task rows</p>
                 </div>
               </CardHeader>
               <CardContent className="px-8 py-4 space-y-1">
+                {work.filter((w) => !w.done).length > 0 && (
+                  <div className="mb-4 pb-4 border-b border-slate-50">
+                    <StoredWorkList work={work.filter((w) => !w.done)} />
+                  </div>
+                )}
                 {tasks.map((task) => (
                   <ActionCenterTask key={task.id} task={task} onToggle={handleToggleTask} />
                 ))}
-                {tasks.length === 0 && (
+                {tasks.length === 0 && work.filter((w) => !w.done).length === 0 && (
                   <div className="py-12 text-center text-slate-300">
                     <p className="text-sm font-medium">No pending actions</p>
                   </div>

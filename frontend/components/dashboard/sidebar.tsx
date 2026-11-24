@@ -28,6 +28,7 @@ import {
   Quote,
   Unlink,
   Link as LinkIcon,
+  ClipboardCheck,
   CreditCard,
   Blocks,
   Shield,
@@ -93,6 +94,7 @@ export const navGroups: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Site Explorer", href: "/seo/site-explorer", icon: Globe },
+      { name: "Site Audit", href: "/seo/site-audit", icon: ClipboardCheck },
       { name: "Keyword Research", href: "/seo/keywords", icon: Search },
       { name: "Keyword Gap", href: "/seo/keyword-gap", icon: GitCompare },
       { name: "Domain Compare", href: "/seo/domain-compare", icon: Scale },

@@ -58,6 +58,11 @@ type SEORepository interface {
 	CountPositionTrackingWebsites(userID uint) (int, error)
 	ListPositionTrackingCampaignsByUser(userID uint) ([]models.PositionTrackingCampaign, error)
 	FindPlanCodeByUser(userID uint) (string, error)
+
+	FindSiteAuditCampaign(projectID uint) (*models.SiteAuditCampaign, error)
+	SaveSiteAuditCampaign(row *models.SiteAuditCampaign) error
+	CountSiteAuditWebsites(userID uint) (int, error)
+	ListSiteAuditCampaignsByUser(userID uint) ([]models.SiteAuditCampaign, error)
 }
 
 type gormSEORepository struct {
@@ -489,6 +494,52 @@ func (r *gormSEORepository) CountPositionTrackingWebsites(userID uint) (int, err
 func (r *gormSEORepository) ListPositionTrackingCampaignsByUser(userID uint) ([]models.PositionTrackingCampaign, error) {
 	var rows []models.PositionTrackingCampaign
 	err := r.db.Joins("JOIN projects ON projects.id = position_tracking_campaigns.project_id").
+		Where("projects.user_id = ? AND projects.deleted_at IS NULL", userID).
+		Find(&rows).Error
+	return rows, err
+}
+
+func (r *gormSEORepository) FindSiteAuditCampaign(projectID uint) (*models.SiteAuditCampaign, error) {
+	var row models.SiteAuditCampaign
+	err := r.db.Where("project_id = ?", projectID).First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *gormSEORepository) SaveSiteAuditCampaign(row *models.SiteAuditCampaign) error {
+	if row == nil {
+		return nil
+	}
+	if row.ID != 0 {
+		return r.db.Save(row).Error
+	}
+	var existing models.SiteAuditCampaign
+	err := r.db.Where("project_id = ?", row.ProjectID).First(&existing).Error
+	if err == nil {
+		row.ID = existing.ID
+		row.CreatedAt = existing.CreatedAt
+		return r.db.Save(row).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return r.db.Create(row).Error
+}
+
+func (r *gormSEORepository) CountSiteAuditWebsites(userID uint) (int, error) {
+	var n int64
+	err := r.db.Table("site_audit_campaigns").
+		Joins("JOIN projects ON projects.id = site_audit_campaigns.project_id").
+		Where("projects.user_id = ? AND projects.deleted_at IS NULL", userID).
+		Count(&n).Error
+	return int(n), err
+}
+
+func (r *gormSEORepository) ListSiteAuditCampaignsByUser(userID uint) ([]models.SiteAuditCampaign, error) {
+	var rows []models.SiteAuditCampaign
+	err := r.db.Joins("JOIN projects ON projects.id = site_audit_campaigns.project_id").
 		Where("projects.user_id = ? AND projects.deleted_at IS NULL", userID).
 		Find(&rows).Error
 	return rows, err

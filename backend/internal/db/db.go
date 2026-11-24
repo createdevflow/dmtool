@@ -79,6 +79,7 @@ func Init(databaseURL string, isDev bool) *gorm.DB {
 			&models.VendorBacklinkExplorerSnapshot{},
 			&models.VendorAIVisibilityGapSnapshot{},
 			&models.PositionTrackingCampaign{},
+			&models.SiteAuditCampaign{},
 			&models.Plan{},
 			&models.Subscription{},
 			&models.UserPreference{},

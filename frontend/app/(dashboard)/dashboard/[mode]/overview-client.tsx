@@ -32,6 +32,7 @@ interface ProjectSummary {
 const SEARCH_TABS: SectionTab[] = [
   { label: "Overview", href: "/dashboard", match: (p) => p === "/dashboard" },
   { label: "Site Explorer", href: "/seo/site-explorer" },
+  { label: "Site Audit", href: "/seo/site-audit" },
   { label: "Keyword Research", href: "/seo/keywords" },
   { label: "Position Tracking", href: "/seo/position-tracking" },
   { label: "AI Insights", href: "/ai-insights" },
@@ -50,6 +51,7 @@ const SOCIAL_TABS: SectionTab[] = [
 const COMBINED_TABS: SectionTab[] = [
   { label: "Overview", href: "/dashboard", match: (p) => p === "/dashboard" },
   { label: "Site Explorer", href: "/seo/site-explorer" },
+  { label: "Site Audit", href: "/seo/site-audit" },
   { label: "Keyword Research", href: "/seo/keywords" },
   { label: "Position Tracking", href: "/seo/position-tracking" },
   { label: "Profile Analyzer", href: "/social/profile-analyzer" },
@@ -79,6 +81,7 @@ const MODE_LABELS: Record<Mode, string> = {
 const TAB_DESCRIPTIONS: Record<string, string> = {
   "/dashboard": "Daily snapshot of clicks, impressions, and AI insights for the active project.",
   "/seo/site-explorer": "Audit the live site: meta tags, headers, indexing, and speed.",
+  "/seo/site-audit": "Semrush-style Site Audit campaigns. Empty stays empty until you Start Audit.",
   "/seo/keywords": "Discover keyword opportunities and track positions over time.",
   "/seo/position-tracking": "Google and Bing rank campaign with Semrush-style reports. Empty stays empty.",
   "/social/profile-analyzer": "Reach, engagement, and audience growth for the connected social profile.",

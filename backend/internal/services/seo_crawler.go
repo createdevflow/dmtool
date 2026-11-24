@@ -51,6 +51,7 @@ type AuditResult struct {
 // SEOCrawlerService crawls a URL and returns a structured AuditResult.
 type SEOCrawlerService interface {
 	Crawl(targetURL string) (*AuditResult, error)
+	CrawlSite(targetURL string, opts SiteCrawlOptions) (*SiteCrawlResult, error)
 }
 
 type seoCrawler struct {

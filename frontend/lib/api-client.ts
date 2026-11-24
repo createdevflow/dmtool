@@ -280,6 +280,25 @@ export const dashboardApi = {
     else if (opts?.fetch) params.set("fetch", "1");
     return apiClient.post(`/seo/position-tracking/refresh?${params.toString()}`);
   },
+  listSiteAudit: (opts?: { page?: number; page_size?: number; sort?: string; dir?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.page) params.set("page", String(opts.page));
+    if (opts?.page_size) params.set("page_size", String(opts.page_size));
+    if (opts?.sort) params.set("sort", opts.sort);
+    if (opts?.dir) params.set("dir", opts.dir);
+    const q = params.toString();
+    return apiClient.get(`/seo/site-audit${q ? `?${q}` : ""}`);
+  },
+  getSiteAudit: (projectId: number) =>
+    apiClient.get(`/seo/site-audit/campaign?project_id=${projectId}`),
+  saveSiteAudit: (data: Record<string, unknown>) =>
+    apiClient.post("/seo/site-audit", data),
+  runSiteAudit: (projectId: number, opts?: { fetch?: boolean; refresh?: boolean }) => {
+    const params = new URLSearchParams({ project_id: String(projectId) });
+    if (opts?.refresh) params.set("refresh", "1");
+    else if (opts?.fetch) params.set("fetch", "1");
+    return apiClient.post(`/seo/site-audit/run?${params.toString()}`);
+  },
   getBacklinks: (projectId: number) => apiClient.get(`/seo/backlinks?project_id=${projectId}`),
   getDomainExplorer: (projectId: number, domain?: string, opts?: { refresh?: boolean; fetch?: boolean }) => {
     const params = new URLSearchParams({ project_id: String(projectId) });

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { dashboardApi } from "@/lib/api-client";
-import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { PositionTrackingPanel } from "@/components/seo/position-tracking";
 
 export default function PositionTrackingPage() {
@@ -38,21 +37,21 @@ export default function PositionTrackingPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-300" />
+      <div className="-mx-6 -mt-6 lg:-mx-8 lg:-mt-8 min-h-[calc(100vh-4rem)] bg-[#f4f5f7] flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-[#ff642d]" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 max-w-[1400px] mx-auto pb-16">
-      <DashboardHeader
-        project={project}
+    <div className="-mx-6 -mt-6 lg:-mx-8 lg:-mt-8 min-h-[calc(100vh-4rem)] bg-[#f4f5f7]">
+      <PositionTrackingPanel
+        projectId={project?.id}
+        defaultDomain={project?.url}
         projects={projects}
-        onProjectChange={(p: any) => fetchData(p.id)}
-        onAddSource={() => {}}
+        project={project}
+        onProjectChange={(p) => fetchData(p.id)}
       />
-      <PositionTrackingPanel projectId={project?.id} defaultDomain={project?.url} />
     </div>
   );
 }

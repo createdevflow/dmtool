@@ -33,7 +33,19 @@ func RunMigrations(database *gorm.DB) error {
 	}
 
 	// Order: independent tables first, then tables with FKs to them.
+	// User/Project and related rows must exist in production — AutoMigrate
+	// only runs in dev, and a fresh Postgres has none of these.
 	targets := []any{
+		&models.User{},
+		&models.RefreshToken{},
+		&models.Project{},
+		&models.OAuthCredential{},
+		&models.Metric{},
+		&models.SocialMetric{},
+		&models.Insight{},
+		&models.Task{},
+		&models.SEOIssue{},
+		&models.KeywordResult{},
 		&models.Plan{},
 		&models.UserPreference{},
 		&models.Subscription{},

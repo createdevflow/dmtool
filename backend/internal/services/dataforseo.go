@@ -44,6 +44,7 @@ type DataForSEOService interface {
 	BacklinkGap(ctx context.Context, target, competitor string) (BacklinkGapResult, error)
 	BacklinkExplorer(ctx context.Context, domain string) (BacklinkExplorerResult, error)
 	AIVisibilityGap(ctx context.Context, target, competitor string) (AIVisibilityGapResult, error)
+	OrganicSERP(ctx context.Context, engine, device string, locationCode int, languageCode string, keywords, domains []string) ([]SERPKeywordResult, error)
 }
 
 type dataForSEO struct {

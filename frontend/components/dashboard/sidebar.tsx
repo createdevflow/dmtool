@@ -100,7 +100,7 @@ export const navGroups: NavGroup[] = [
       { name: "Content Gap", href: "/seo/content-gap", icon: FileSearch },
       { name: "Citation Gap", href: "/seo/citation-gap", icon: Quote },
       { name: "Backlink Gap", href: "/seo/backlink-gap", icon: Unlink },
-      { name: "Rank Tracking", href: "/seo/rank-tracking", icon: TrendingUp },
+      { name: "Position Tracking", href: "/seo/position-tracking", icon: TrendingUp },
       { name: "Backlinks", href: "/seo/backlinks", icon: LinkIcon },
       { name: "AI Visibility", href: "/seo/ai-visibility", icon: Sparkles },
       { name: "AI Visibility Gap", href: "/seo/ai-visibility-gap", icon: Eye },

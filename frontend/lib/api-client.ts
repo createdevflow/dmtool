@@ -270,6 +270,16 @@ export const dashboardApi = {
   syncProject: (projectId: number) => apiClient.post(`/projects/${projectId}/sync`),
 
   getRankTracking: (projectId: number) => apiClient.get(`/seo/rank-tracking?project_id=${projectId}`),
+  getPositionTracking: (projectId: number) =>
+    apiClient.get(`/seo/position-tracking?project_id=${projectId}`),
+  savePositionTracking: (data: Record<string, unknown>) =>
+    apiClient.post("/seo/position-tracking", data),
+  refreshPositionTracking: (projectId: number, opts?: { fetch?: boolean; refresh?: boolean }) => {
+    const params = new URLSearchParams({ project_id: String(projectId) });
+    if (opts?.refresh) params.set("refresh", "1");
+    else if (opts?.fetch) params.set("fetch", "1");
+    return apiClient.post(`/seo/position-tracking/refresh?${params.toString()}`);
+  },
   getBacklinks: (projectId: number) => apiClient.get(`/seo/backlinks?project_id=${projectId}`),
   getDomainExplorer: (projectId: number, domain?: string, opts?: { refresh?: boolean; fetch?: boolean }) => {
     const params = new URLSearchParams({ project_id: String(projectId) });

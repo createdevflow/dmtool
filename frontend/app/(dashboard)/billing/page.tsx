@@ -29,6 +29,7 @@ type ProPlan = "pro_monthly" | "pro_yearly";
 
 const PRO_FEATURES = [
   "Up to 3 connected websites",
+  "Position Tracking: 500 keywords / 5 sites (monthly) or 1,500 / 15 with tags and cannibalization (yearly)",
   "Full AI insights and recommendations",
   "Unlimited audit history",
   "Exportable CSV reports",

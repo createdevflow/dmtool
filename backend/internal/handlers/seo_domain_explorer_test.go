@@ -25,12 +25,14 @@ type configuredDFS struct {
 	backlinkResult         services.BacklinkGapResult
 	backlinkExplorerResult services.BacklinkExplorerResult
 	visGapResult           services.AIVisibilityGapResult
+	serpResults            []services.SERPKeywordResult
 	labs                   map[string]services.KeywordLabsMetrics
 	relatedResult          services.RelatedKeywordsResult
 	err                    error
 	calls                  int
 	overviewCalls          int
 	relatedCalls           int
+	serpCalls              int
 }
 
 func (f *configuredDFS) Configured() bool { return true }
@@ -89,6 +91,16 @@ func (f *configuredDFS) BacklinkExplorer(_ context.Context, _ string) (services.
 func (f *configuredDFS) AIVisibilityGap(_ context.Context, _, _ string) (services.AIVisibilityGapResult, error) {
 	f.calls++
 	return f.visGapResult, f.err
+}
+func (f *configuredDFS) OrganicSERP(_ context.Context, _, _ string, _ int, _ string, _, _ []string) ([]services.SERPKeywordResult, error) {
+	f.serpCalls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.serpResults == nil {
+		return []services.SERPKeywordResult{}, nil
+	}
+	return f.serpResults, nil
 }
 
 func TestDomainExplorerUnconfigured(t *testing.T) {

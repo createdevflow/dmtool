@@ -18,10 +18,18 @@ function featuresForPlan(plan: Plan): string[] {
   const out: string[] = [];
   if (plan.code === "free") {
     out.push(`Connect up to ${plan.max_sites} website`);
+    out.push("Position Tracking: 10 keywords, 1 website");
     out.push("AI-powered insights (limited)");
     out.push("Audit history (30 days)");
+  } else if (plan.code === "pro_yearly") {
+    out.push(`Connect up to ${plan.max_sites} websites`);
+    out.push("Position Tracking: 1,500 keywords, 15 sites, tags, cannibalization, multitargeting");
+    out.push("Full AI insights and recommendations");
+    out.push("Full audit history");
+    out.push("Exportable reports");
   } else {
     out.push(`Connect up to ${plan.max_sites} websites`);
+    out.push("Position Tracking: 500 keywords, 5 websites");
     out.push("Full AI insights and recommendations");
     out.push("Full audit history");
     out.push("Exportable reports");

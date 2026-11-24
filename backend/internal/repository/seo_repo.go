@@ -52,6 +52,12 @@ type SEORepository interface {
 
 	FindVendorAIVisibilityGapSnapshot(target, competitor string, locationCode int, languageCode string) (*models.VendorAIVisibilityGapSnapshot, error)
 	SaveVendorAIVisibilityGapSnapshot(row *models.VendorAIVisibilityGapSnapshot) error
+
+	FindPositionTrackingCampaign(projectID uint) (*models.PositionTrackingCampaign, error)
+	SavePositionTrackingCampaign(row *models.PositionTrackingCampaign) error
+	CountPositionTrackingWebsites(userID uint) (int, error)
+	ListPositionTrackingCampaignsByUser(userID uint) ([]models.PositionTrackingCampaign, error)
+	FindPlanCodeByUser(userID uint) (string, error)
 }
 
 type gormSEORepository struct {
@@ -440,4 +446,67 @@ func (r *gormSEORepository) SaveVendorAIVisibilityGapSnapshot(row *models.Vendor
 		return err
 	}
 	return r.db.Create(row).Error
+}
+
+func (r *gormSEORepository) FindPositionTrackingCampaign(projectID uint) (*models.PositionTrackingCampaign, error) {
+	var row models.PositionTrackingCampaign
+	err := r.db.Where("project_id = ?", projectID).First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *gormSEORepository) SavePositionTrackingCampaign(row *models.PositionTrackingCampaign) error {
+	if row == nil {
+		return nil
+	}
+	if row.ID != 0 {
+		return r.db.Save(row).Error
+	}
+	var existing models.PositionTrackingCampaign
+	err := r.db.Where("project_id = ?", row.ProjectID).First(&existing).Error
+	if err == nil {
+		row.ID = existing.ID
+		row.CreatedAt = existing.CreatedAt
+		return r.db.Save(row).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return r.db.Create(row).Error
+}
+
+func (r *gormSEORepository) CountPositionTrackingWebsites(userID uint) (int, error) {
+	var n int64
+	err := r.db.Table("position_tracking_campaigns").
+		Joins("JOIN projects ON projects.id = position_tracking_campaigns.project_id").
+		Where("projects.user_id = ? AND projects.deleted_at IS NULL", userID).
+		Count(&n).Error
+	return int(n), err
+}
+
+func (r *gormSEORepository) ListPositionTrackingCampaignsByUser(userID uint) ([]models.PositionTrackingCampaign, error) {
+	var rows []models.PositionTrackingCampaign
+	err := r.db.Joins("JOIN projects ON projects.id = position_tracking_campaigns.project_id").
+		Where("projects.user_id = ? AND projects.deleted_at IS NULL", userID).
+		Find(&rows).Error
+	return rows, err
+}
+
+func (r *gormSEORepository) FindPlanCodeByUser(userID uint) (string, error) {
+	var code string
+	err := r.db.Table("subscriptions").
+		Select("plan_code").
+		Where("user_id = ? AND status = ?", userID, models.SubscriptionStatusActive).
+		Order("id DESC").
+		Limit(1).
+		Scan(&code).Error
+	if err != nil {
+		return "", err
+	}
+	if code == "" {
+		return models.PlanCodeFree, nil
+	}
+	return code, nil
 }

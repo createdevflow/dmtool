@@ -45,7 +45,7 @@ export default function PositionTrackingPage() {
   }
 
   return (
-    <div className="space-y-10 max-w-7xl mx-auto pb-32 pt-4">
+    <div className="space-y-4 max-w-[1400px] mx-auto pb-16">
       <DashboardHeader
         project={project}
         projects={projects}

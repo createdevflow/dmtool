@@ -9,6 +9,7 @@ import { DashboardModeProvider } from "@/components/dashboard/dashboard-mode-con
 import { COOKIE_MODE } from "@/lib/auth-cookie";
 import { SidebarSwitch } from "@/components/admin/sidebar-switch";
 import { ImpersonationBanner } from "@/components/admin/impersonation-banner";
+import { DashboardShell } from "@/components/dashboard/sidebar";
 
 export default async function DashboardLayout({
   children,
@@ -28,7 +29,7 @@ export default async function DashboardLayout({
         <TooltipProvider delayDuration={150}>
           <div className="h-full bg-background min-h-screen font-sans">
             <SidebarSwitch />
-            <div className="lg:pl-64 flex flex-col min-h-screen">
+            <DashboardShell>
               <Topbar />
 
               <main className="flex-1 p-6 lg:p-8 max-w-7xl w-full mx-auto relative">
@@ -38,7 +39,7 @@ export default async function DashboardLayout({
                 <ImpersonationBanner />
                 {children}
               </main>
-            </div>
+            </DashboardShell>
           </div>
         </TooltipProvider>
       </SidebarDrawerProvider>

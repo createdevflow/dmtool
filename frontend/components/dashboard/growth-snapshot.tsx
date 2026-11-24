@@ -186,8 +186,8 @@ export function GrowthSnapshot({ mode, project, snapshotData }: GrowthSnapshotPr
   // App-wide modes: search → website/SEO KPI set, social → social KPI
   // set, combined → combined KPI set. "website" is only an internal
   // KPI-set name; the real mode system (useDashboardMode) uses
-  // "search". No separate UI switcher here — the sidebar ModeSwitcher
-  // owns mode changes.
+  // "search". Overview still follows dashboard mode from the cookie and
+  // onboarding; the two-pane user nav does not host a mode switcher.
   const stats =
     mode === "search" ? websiteStats :
     mode === "social" ? socialStats :

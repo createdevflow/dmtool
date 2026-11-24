@@ -2,28 +2,10 @@
 
 // CommandMenu — global keyboard launcher (Cmd/Ctrl+K).
 //
-// Phase 8 rewrite. The previous version had a 4-item hardcoded list
-// and pointed at several dead routes (`/social-insights`,
-// `/content-ai`, `/settings`). The fix:
-//
-//   1. Items are derived from the SAME `navGroups` data the desktop
-//      and mobile sidebars consume (frontend/components/dashboard/
-//      sidebar.tsx). Adding a route to the sidebar is now
-//      automatically a route in command-palette. The single source
-//      of truth lives next to the rest of the nav config.
-//   2. We honour the user's current dashboard mode. A user in
-//      "social" mode won't see SEO Intelligence items in the
-//      palette; an item hidden by `modeExtras` is also hidden
-//      here. Switching modes is one click on the sidebar
-//      mode-switcher.
-//   3. The dialog is wrapped in our shared Dialog primitive so
-//      Escape closes, click-outside closes, focus is trapped, and
-//      screen-reader semantics carry through.
-//   4. Stale `/settings` link removed in favour of
-//      `/projects/settings` (the only Settings page that exists).
-//
-// Stale-route check passes by construction now; the phase8_verify
-// tool audits `navGroups[]` against the actual page tree on disk.
+// Items come from the same `navGroups` data the two-pane sidebar uses.
+// Adding a route to the sidebar adds it to the palette. Admin-only
+// rails stay hidden unless the user cookie role is admin. Dashboard
+// Search/Social/Combined mode does not filter this list.
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
@@ -34,13 +16,28 @@ import {
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useDashboardMode } from "./dashboard-mode-context";
 import { navGroups, type NavItem } from "./sidebar";
+import { readCookie, COOKIE_USER } from "@/lib/auth-cookie";
+
+function isAdminUser(): boolean {
+  if (typeof document === "undefined") return false;
+  const raw = readCookie(COOKIE_USER);
+  if (!raw) return false;
+  try {
+    return JSON.parse(raw)?.role === "admin";
+  } catch {
+    return false;
+  }
+}
 
 export function CommandMenu() {
   const [open, setOpen] = React.useState(false);
+  const [admin, setAdmin] = React.useState(false);
   const router = useRouter();
-  const { mode } = useDashboardMode();
+
+  React.useEffect(() => {
+    setAdmin(isAdminUser());
+  }, []);
 
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -61,31 +58,22 @@ export function CommandMenu() {
     [router]
   );
 
-  // Mode-aware group list. The same two-level filter the Sidebar
-  // applies: group's modes must include the active mode, and an
-  // item with modeExtras must list the active mode (otherwise it's
-  // a drill-down visible only inside the parent group's home mode).
   const visibleGroups = React.useMemo(
     () =>
       navGroups
-        .filter((g) => g.modes.includes(mode))
+        .filter((g) => !g.adminOnly || admin)
         .map((g) => ({
-          ...g,
-          items: g.items.filter(
-            (item) =>
-              item.modeExtras === undefined || item.modeExtras.includes(mode)
-          ),
+          title: g.title,
+          icon: g.icon,
+          items: g.sections.flatMap((s) => s.items),
         }))
         .filter((g) => g.items.length > 0),
-    [mode]
+    [admin]
   );
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
-        // The cmdk shell handles its own padding/width; we drop
-        // the default Dialog padding/width and give it a tighter
-        // command-palette shape.
         className="max-w-xl gap-0 p-0 overflow-hidden"
         aria-label="Command palette"
         hideClose
@@ -115,6 +103,7 @@ export function CommandMenu() {
                   <PaletteItem
                     key={item.href}
                     item={item}
+                    FallbackIcon={group.icon}
                     onSelect={onSelect(item.href)}
                   />
                 ))}
@@ -127,17 +116,16 @@ export function CommandMenu() {
   );
 }
 
-// PaletteItem — renders one row. We split into a sub-component so
-// the type carries the icon through correctly (palette items need
-// the NavItem's icon type, not the lucide component shape).
 function PaletteItem({
   item,
   onSelect,
+  FallbackIcon,
 }: {
   item: NavItem;
   onSelect: () => void;
+  FallbackIcon: NonNullable<NavItem["icon"]>;
 }) {
-  const Icon = item.icon;
+  const Icon = item.icon ?? FallbackIcon;
   return (
     <Command.Item
       onSelect={onSelect}

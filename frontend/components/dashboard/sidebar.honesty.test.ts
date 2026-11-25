@@ -32,6 +32,7 @@ describe("navGroups honesty", () => {
     expect(all).toContain("/seo/backlink-gap");
     expect(all).toContain("/seo/position-tracking");
     expect(all).toContain("/seo/site-audit");
+    expect(all).toContain("/seo/domain-overview");
     expect(all).toContain("/alerts");
     expect(all).not.toContain("/ai/visual");
     expect(all).not.toContain("/social/competitors");

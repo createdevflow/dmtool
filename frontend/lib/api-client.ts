@@ -307,6 +307,13 @@ export const dashboardApi = {
     else if (opts?.fetch) params.set("fetch", "1");
     return apiClient.get(`/seo/domain-explorer?${params.toString()}`);
   },
+  getDomainOverview: (projectId: number, domain?: string, opts?: { refresh?: boolean; fetch?: boolean }) => {
+    const params = new URLSearchParams({ project_id: String(projectId) });
+    if (domain) params.set("domain", domain);
+    if (opts?.refresh) params.set("refresh", "1");
+    else if (opts?.fetch) params.set("fetch", "1");
+    return apiClient.get(`/seo/domain-overview?${params.toString()}`);
+  },
   getAIVisibility: (projectId: number, domain?: string, opts?: { refresh?: boolean; fetch?: boolean }) => {
     const params = new URLSearchParams({ project_id: String(projectId) });
     if (domain) params.set("domain", domain);

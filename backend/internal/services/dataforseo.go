@@ -1059,12 +1059,13 @@ func (s *dataForSEO) fillOrganicOverview(ctx context.Context, host string, out *
 		return fmt.Errorf("no domain rank overview for %s", host)
 	}
 	out.Organic = OrganicOverview{
-		ETV:      row.Metrics.Organic.ETV,
-		Count:    row.Metrics.Organic.Count,
-		Pos1:     row.Metrics.Organic.Pos1,
-		Pos2To3:  row.Metrics.Organic.Pos2To3,
-		Pos4To10: row.Metrics.Organic.Pos4To10,
-		PaidETV:  row.Metrics.Paid.ETV,
+		ETV:       row.Metrics.Organic.ETV,
+		Count:     row.Metrics.Organic.Count,
+		Pos1:      row.Metrics.Organic.Pos1,
+		Pos2To3:   row.Metrics.Organic.Pos2To3,
+		Pos4To10:  row.Metrics.Organic.Pos4To10,
+		PaidETV:   row.Metrics.Paid.ETV,
+		PaidCount: row.Metrics.Paid.Count,
 	}
 	return nil
 }
@@ -1162,11 +1163,18 @@ func (s *dataForSEO) fillBacklinks(ctx context.Context, host string, out *Domain
 		return fmt.Errorf("no backlink summary for %s", host)
 	}
 	row := rows[0]
+	follow := row.ReferringPages - row.ReferringPagesNofollow
+	if follow < 0 {
+		follow = 0
+	}
 	out.Backlinks = BacklinkOverview{
 		Backlinks:        row.Backlinks,
 		ReferringDomains: row.ReferringDomains,
 		Rank:             row.Rank,
 		SpamScore:        row.BacklinksSpamScore,
+		Follow:           follow,
+		Nofollow:         row.ReferringPagesNofollow,
+		Types:            row.ReferringLinksTypes,
 	}
 	return nil
 }
@@ -1292,19 +1300,23 @@ func (r DomainExplorerResult) HasAnyData() bool {
 }
 
 type OrganicOverview struct {
-	ETV      float64 `json:"etv"`
-	Count    int     `json:"count"`
-	Pos1     int     `json:"pos_1"`
-	Pos2To3  int     `json:"pos_2_3"`
-	Pos4To10 int     `json:"pos_4_10"`
-	PaidETV  float64 `json:"paid_etv"`
+	ETV       float64 `json:"etv"`
+	Count     int     `json:"count"`
+	Pos1      int     `json:"pos_1"`
+	Pos2To3   int     `json:"pos_2_3"`
+	Pos4To10  int     `json:"pos_4_10"`
+	PaidETV   float64 `json:"paid_etv"`
+	PaidCount int     `json:"paid_count"`
 }
 
 type BacklinkOverview struct {
-	Backlinks        int `json:"backlinks"`
-	ReferringDomains int `json:"referring_domains"`
-	Rank             int `json:"rank"`
-	SpamScore        int `json:"spam_score"`
+	Backlinks        int            `json:"backlinks"`
+	ReferringDomains int            `json:"referring_domains"`
+	Rank             int            `json:"rank"`
+	SpamScore        int            `json:"spam_score"`
+	Follow           int            `json:"follow"`
+	Nofollow         int            `json:"nofollow"`
+	Types            map[string]int `json:"types,omitempty"`
 }
 
 type CompetitorDomain struct {

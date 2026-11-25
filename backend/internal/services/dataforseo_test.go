@@ -46,7 +46,7 @@ func TestDomainExplorerParsesMockAPI(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "domain_rank_overview"):
-			_, _ = w.Write([]byte(`{"status_code":20000,"status_message":"Ok.","tasks":[{"status_code":20000,"status_message":"Ok.","result":[{"target":"example.com","location_code":2840,"language_code":"en","metrics":{"organic":{"pos_1":2,"pos_2_3":5,"pos_4_10":10,"etv":1234.5,"count":40},"paid":{"etv":10}}}]}]}`))
+			_, _ = w.Write([]byte(`{"status_code":20000,"status_message":"Ok.","tasks":[{"status_code":20000,"status_message":"Ok.","result":[{"target":"example.com","location_code":2840,"language_code":"en","metrics":{"organic":{"pos_1":2,"pos_2_3":5,"pos_4_10":10,"etv":1234.5,"count":40},"paid":{"etv":10,"count":3}}}]}]}`))
 		case strings.Contains(r.URL.Path, "competitors_domain"):
 			_, _ = w.Write([]byte(`{"status_code":20000,"tasks":[{"status_code":20000,"result":[{"items":[{"domain":"example.com","intersections":9,"avg_position":4.2,"full_domain_metrics":{"organic":{"etv":1,"count":1}}},{"domain":"rival.com","intersections":12,"avg_position":6.1,"full_domain_metrics":{"organic":{"etv":800.2,"count":20}}}]}]}]}`))
 		case strings.Contains(r.URL.Path, "ranked_keywords"):

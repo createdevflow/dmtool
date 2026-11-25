@@ -63,6 +63,9 @@ type SEORepository interface {
 	SaveSiteAuditCampaign(row *models.SiteAuditCampaign) error
 	CountSiteAuditWebsites(userID uint) (int, error)
 	ListSiteAuditCampaignsByUser(userID uint) ([]models.SiteAuditCampaign, error)
+
+	CountDomainOverviewRequests(userID uint, since time.Time) (int, error)
+	InsertDomainOverviewRequest(userID uint, domain string) error
 }
 
 type gormSEORepository struct {
@@ -560,4 +563,16 @@ func (r *gormSEORepository) FindPlanCodeByUser(userID uint) (string, error) {
 		return models.PlanCodeFree, nil
 	}
 	return code, nil
+}
+
+func (r *gormSEORepository) CountDomainOverviewRequests(userID uint, since time.Time) (int, error) {
+	var n int64
+	err := r.db.Model(&models.DomainOverviewRequest{}).
+		Where("user_id = ? AND created_at >= ?", userID, since).
+		Count(&n).Error
+	return int(n), err
+}
+
+func (r *gormSEORepository) InsertDomainOverviewRequest(userID uint, domain string) error {
+	return r.db.Create(&models.DomainOverviewRequest{UserID: userID, Domain: domain}).Error
 }

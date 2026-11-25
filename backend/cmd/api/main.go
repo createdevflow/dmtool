@@ -426,6 +426,7 @@ func registerSEORoutes(
 	g.POST("/seo/site-audit/run", h.RunSiteAudit)
 	g.GET("/seo/backlinks", h.Backlinks)
 	g.GET("/seo/domain-explorer", h.DomainExplorer)
+	g.GET("/seo/domain-overview", h.DomainOverview)
 	g.GET("/seo/ai-visibility", h.AIVisibility)
 	g.GET("/seo/keyword-gap", h.KeywordGap)
 	g.GET("/seo/domain-compare", h.DomainCompare)

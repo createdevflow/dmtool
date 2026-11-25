@@ -108,6 +108,7 @@ export const navGroups: NavGroup[] = [
         items: [
           { name: "Site Audit", href: "/seo/site-audit", icon: ClipboardCheck },
           { name: "Site Explorer", href: "/seo/site-explorer", icon: Globe },
+          { name: "Domain Overview", href: "/seo/domain-overview", icon: Globe },
         ],
       },
       {
